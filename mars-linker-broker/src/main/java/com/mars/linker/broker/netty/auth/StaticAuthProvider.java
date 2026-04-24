@@ -1,14 +1,14 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.auth;
 
 /**
  * 静态账号密码鉴权（兼容现有配置）。
  */
-final class StaticAuthProvider implements AuthProvider {
+public final class StaticAuthProvider implements AuthProvider {
     private final boolean enabled;
     private final String username;
     private final String password;
 
-    StaticAuthProvider(boolean enabled, String username, String password) {
+    public StaticAuthProvider(boolean enabled, String username, String password) {
         this.enabled = enabled;
         this.username = username;
         this.password = password;

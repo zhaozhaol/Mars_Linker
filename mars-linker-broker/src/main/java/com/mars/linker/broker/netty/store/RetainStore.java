@@ -1,4 +1,4 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.store;
 
 import java.util.List;
 
@@ -7,7 +7,7 @@ import java.util.List;
  */
 public interface RetainStore {
 
-    final class RetainedMessage {
+    public final class RetainedMessage {
         public final String topic;
         public final byte[] payload;
         public final int qos;
@@ -19,9 +19,9 @@ public interface RetainStore {
         }
     }
 
-    void put(String topic, byte[] payload, int qos);
+    public void put(String topic, byte[] payload, int qos);
 
-    void remove(String topic);
+    public void remove(String topic);
 
-    List<RetainedMessage> list();
+    public List<RetainedMessage> list();
 }

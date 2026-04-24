@@ -1,5 +1,6 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.metrics;
 
+import com.mars.linker.broker.netty.MqttProtocolHandler;
 import io.micrometer.core.instrument.FunctionCounter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;

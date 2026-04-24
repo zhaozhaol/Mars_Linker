@@ -1,10 +1,10 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.store;
 
-final class DbStoreNaming {
+public final class DbStoreNaming {
     private DbStoreNaming() {
     }
 
-    static String prefix(String schema, String tablePrefix) {
+    public static String prefix(String schema, String tablePrefix) {
         String p = tablePrefix == null ? "ml_" : tablePrefix.trim();
         if (p.isEmpty()) {
             p = "ml_";
@@ -16,7 +16,7 @@ final class DbStoreNaming {
         return s + "." + p;
     }
 
-    static String createTableIfNotExists(String fullTableName, String ddlBody) {
+    public static String createTableIfNotExists(String fullTableName, String ddlBody) {
         return "CREATE TABLE IF NOT EXISTS " + fullTableName + " " + ddlBody;
     }
 }

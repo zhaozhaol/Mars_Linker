@@ -1,4 +1,4 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.auth;
 
 import com.mars.linker.broker.config.MarsLinkerMqttBrokerProperties;
 import org.slf4j.Logger;
@@ -7,13 +7,13 @@ import org.slf4j.LoggerFactory;
 /**
  * 根据 {@link MarsLinkerMqttBrokerProperties} 构建 {@link AuthProvider} 实例（静态或 HTTP 回调）。
  */
-final class AuthProviderFactory {
+public final class AuthProviderFactory {
     private static final Logger log = LoggerFactory.getLogger(AuthProviderFactory.class);
 
     private AuthProviderFactory() {
     }
 
-    static AuthProvider create(MarsLinkerMqttBrokerProperties p) {
+    public static AuthProvider create(MarsLinkerMqttBrokerProperties p) {
         if (p == null || !p.isAuthEnabled()) {
             return new StaticAuthProvider(false, null, null);
         }

@@ -1,4 +1,4 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.store;
 
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
@@ -15,19 +15,20 @@ import java.util.Map;
 /**
  * Redis 版 RetainStore。
  */
-final class RedisRetainStore implements RetainStore {
+public final class RedisRetainStore implements RetainStore {
     private static final Logger log = LoggerFactory.getLogger(RedisRetainStore.class);
 
     private final StatefulRedisConnection<String, String> connection;
     private final RedisCommands<String, String> cmd;
     private final String retainKey;
 
-    RedisRetainStore(RedisURI redisUri, String keyPrefix) {
+    public RedisRetainStore(RedisURI redisUri, String keyPrefix) {
         RedisClient client = RedisClient.create(redisUri);
         this.connection = client.connect();
         this.cmd = connection.sync();
         String p = keyPrefix == null || keyPrefix.trim().isEmpty() ? "ml" : keyPrefix.trim();
         this.retainKey = p + ":retain";
+        this.cmd.ping(); // fail-fast: 验证 Redis 连接可用
     }
 
     @Override

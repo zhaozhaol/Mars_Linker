@@ -1,4 +1,4 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.store;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,7 +15,7 @@ import java.util.List;
 /**
  * DB 版 RetainStore。
  */
-final class DbRetainStore implements RetainStore {
+public final class DbRetainStore implements RetainStore {
     private static final Logger log = LoggerFactory.getLogger(DbRetainStore.class);
 
     private final String jdbcUrl;
@@ -23,7 +23,7 @@ final class DbRetainStore implements RetainStore {
     private final String password;
     private final String tableRetain;
 
-    DbRetainStore(String jdbcUrl, String username, String password, String schema, String tablePrefix) {
+    public DbRetainStore(String jdbcUrl, String username, String password, String schema, String tablePrefix) {
         this.jdbcUrl = jdbcUrl;
         this.username = username;
         this.password = password;

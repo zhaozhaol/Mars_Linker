@@ -1,4 +1,4 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.acl;
 
 import java.util.Collections;
 import java.util.List;
@@ -6,7 +6,7 @@ import java.util.List;
 /**
  * 前缀 ACL（兼容现有配置语义）。
  */
-final class PrefixAclProvider implements AclProvider {
+public final class PrefixAclProvider implements AclProvider {
     private final boolean enabled;
     private final List<String> allowSubscribePrefixes;
     private final List<String> allowPublishPrefixes;
@@ -14,7 +14,7 @@ final class PrefixAclProvider implements AclProvider {
     private final List<String> denySubscribePrefixes;
     private final List<String> denyPublishPrefixes;
 
-    PrefixAclProvider(boolean enabled,
+    public PrefixAclProvider(boolean enabled,
                       List<String> allowSubscribePrefixes,
                       List<String> allowPublishPrefixes,
                       boolean defaultDeny,

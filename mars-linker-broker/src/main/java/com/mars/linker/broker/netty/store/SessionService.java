@@ -1,4 +1,4 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.store;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,27 +18,27 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * 会话与离线队列管理（最小实现），并负责持久化协调。
  */
-final class SessionService {
+public final class SessionService {
     private static final Logger log = LoggerFactory.getLogger(SessionService.class);
     private static final long PERSIST_DEBOUNCE_MS = 200L;
 
-    static final class Session {
-        final String clientId;
-        final Map<String, Integer> subscriptionsQos = new ConcurrentHashMap<>();
-        final Queue<QueuedMessage> offlineQueue = new ConcurrentLinkedQueue<>();
+    public static final class Session {
+        public final String clientId;
+        public final Map<String, Integer> subscriptionsQos = new ConcurrentHashMap<>();
+        public final Queue<QueuedMessage> offlineQueue = new ConcurrentLinkedQueue<>();
 
-        Session(String clientId) {
+        public Session(String clientId) {
             this.clientId = clientId;
         }
     }
 
-    static final class QueuedMessage {
-        final String topic;
-        final byte[] payload;
-        final boolean retain;
-        final int qos;
+    public static final class QueuedMessage {
+        public final String topic;
+        public final byte[] payload;
+        public final boolean retain;
+        public final int qos;
 
-        QueuedMessage(String topic, byte[] payload, boolean retain, int qos) {
+        public QueuedMessage(String topic, byte[] payload, boolean retain, int qos) {
             this.topic = topic;
             this.payload = payload;
             this.retain = retain;
@@ -53,7 +53,7 @@ final class SessionService {
     private final Object persistTaskLock = new Object();
     private volatile ScheduledFuture<?> pendingPersistTask;
 
-    static final SessionService INSTANCE = new SessionService(
+    public static final SessionService INSTANCE = new SessionService(
             new FileSessionStore(java.nio.file.Paths.get("data", "session-store.tsv"))
     );
 
@@ -72,22 +72,22 @@ final class SessionService {
         }
     }
 
-    static SessionService create(SessionStore store) {
+    public static SessionService create(SessionStore store) {
         if (store == null) {
             return INSTANCE;
         }
         return new SessionService(store);
     }
 
-    Session getOrCreate(String clientId) {
+    public Session getOrCreate(String clientId) {
         return sessions.computeIfAbsent(clientId, Session::new);
     }
 
-    Session get(String clientId) {
+    public Session get(String clientId) {
         return sessions.get(clientId);
     }
 
-    void remove(String clientId) {
+    public void remove(String clientId) {
         if (clientId == null) {
             return;
         }
@@ -95,11 +95,11 @@ final class SessionService {
         persist();
     }
 
-    Collection<Session> allSessions() {
+    public Collection<Session> allSessions() {
         return sessions.values();
     }
 
-    void persist() {
+    public void persist() {
         persistDirty.set(true);
         schedulePersistIfNeeded();
     }
@@ -132,19 +132,19 @@ final class SessionService {
         }
     }
 
-    synchronized void resetForTests() {
+    public synchronized void resetForTests() {
         flushPersistNow();
         sessions.clear();
         store.deleteIfExists();
     }
 
-    synchronized void reloadForTests() {
+    public synchronized void reloadForTests() {
         flushPersistNow();
         sessions.clear();
         sessions.putAll(store.loadAll());
     }
 
-    synchronized void flushPersistNow() {
+    public synchronized void flushPersistNow() {
         ScheduledFuture<?> task;
         synchronized (persistTaskLock) {
             task = pendingPersistTask;

@@ -1,4 +1,4 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.protocol;
 
 import io.netty.channel.ChannelHandlerContext;
 
@@ -9,17 +9,17 @@ import java.nio.charset.StandardCharsets;
 /**
  * 设备上下线事件发布器。
  */
-final class DeviceLifecyclePublisher {
-    static final String DEVICE_CONNECTED_TOPIC = "devices/connected";
-    static final String DEVICE_OFFLINE_TOPIC = "devices/offline";
+public final class DeviceLifecyclePublisher {
+    public static final String DEVICE_CONNECTED_TOPIC = "devices/connected";
+    public static final String DEVICE_OFFLINE_TOPIC = "devices/offline";
 
     private final PublishCallback publishCallback;
 
-    DeviceLifecyclePublisher(PublishCallback publishCallback) {
+    public DeviceLifecyclePublisher(PublishCallback publishCallback) {
         this.publishCallback = publishCallback;
     }
 
-    PublishResult publish(ChannelHandlerContext ctx,
+    public PublishResult publish(ChannelHandlerContext ctx,
                           String topic,
                           String event,
                           String clientId,
@@ -60,16 +60,16 @@ final class DeviceLifecyclePublisher {
     }
 
     @FunctionalInterface
-    interface PublishCallback {
-        int publish(String topic, byte[] payload);
+    public interface PublishCallback {
+        public int publish(String topic, byte[] payload);
     }
 
-    static final class PublishResult {
-        final String ip;
-        final int port;
-        final int delivered;
+    public static final class PublishResult {
+        public final String ip;
+        public final int port;
+        public final int delivered;
 
-        private PublishResult(String ip, int port, int delivered) {
+        public PublishResult(String ip, int port, int delivered) {
             this.ip = ip;
             this.port = port;
             this.delivered = delivered;

@@ -1,4 +1,4 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.protocol;
 
 import io.netty.channel.ChannelId;
 
@@ -12,13 +12,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * 订阅注册表（精确/通配符/$share）与共享订阅轮询选择。
  */
-final class SubscriptionRegistry {
-    interface GrantedQosLookup {
-        int lookup(ChannelId channelId, String topicOrFilter);
+public final class SubscriptionRegistry {
+    public interface GrantedQosLookup {
+        public int lookup(ChannelId channelId, String topicOrFilter);
     }
 
-    interface ChannelActiveProbe {
-        boolean isActive(ChannelId channelId);
+    public interface ChannelActiveProbe {
+        public boolean isActive(ChannelId channelId);
     }
 
     private final Map<String, CopyOnWriteArraySet<ChannelId>> exactTopicSubscribers = new ConcurrentHashMap<>();
@@ -27,7 +27,7 @@ final class SubscriptionRegistry {
     private final Map<String, Map<String, CopyOnWriteArraySet<ChannelId>>> shareSubscribers = new ConcurrentHashMap<>();
     private final Map<String, AtomicInteger> shareRoundRobin = new ConcurrentHashMap<>();
 
-    void add(ChannelId channelId, String topicFilter) {
+    public void add(ChannelId channelId, String topicFilter) {
         if (TopicFilterSupport.isShareSubscription(topicFilter)) {
             TopicFilterSupport.ShareSubscription ss = TopicFilterSupport.parseShareSubscription(topicFilter);
             if (ss == null) {
@@ -47,7 +47,7 @@ final class SubscriptionRegistry {
         wildcardFilterIndex.add(topicFilter);
     }
 
-    boolean remove(ChannelId channelId, String topicFilter) {
+    public boolean remove(ChannelId channelId, String topicFilter) {
         boolean removed = false;
         if (TopicFilterSupport.isShareSubscription(topicFilter)) {
             TopicFilterSupport.ShareSubscription ss = TopicFilterSupport.parseShareSubscription(topicFilter);
@@ -87,7 +87,7 @@ final class SubscriptionRegistry {
         return removed;
     }
 
-    Map<ChannelId, Integer> collectGrantedQos(String topic,
+    public Map<ChannelId, Integer> collectGrantedQos(String topic,
                                               GrantedQosLookup qosLookup,
                                               ChannelActiveProbe activeProbe) {
         Map<ChannelId, Integer> grantedQosBySubscriber = new HashMap<>();
@@ -140,7 +140,7 @@ final class SubscriptionRegistry {
         return grantedQosBySubscriber;
     }
 
-    void clear() {
+    public void clear() {
         exactTopicSubscribers.clear();
         wildcardSubscribers.clear();
         wildcardFilterIndex.clear();

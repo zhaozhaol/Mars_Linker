@@ -1,4 +1,4 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.store;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,7 +15,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * DB 版 SessionStore（全量快照语义）。
  */
-final class DbSessionStore implements SessionStore {
+public final class DbSessionStore implements SessionStore {
     private static final Logger log = LoggerFactory.getLogger(DbSessionStore.class);
 
     private final String jdbcUrl;
@@ -25,7 +25,7 @@ final class DbSessionStore implements SessionStore {
     private final String tableOffline;
     private final String tableSessionIndex;
 
-    DbSessionStore(String jdbcUrl, String username, String password, String schema, String tablePrefix) {
+    public DbSessionStore(String jdbcUrl, String username, String password, String schema, String tablePrefix) {
         this.jdbcUrl = jdbcUrl;
         this.username = username;
         this.password = password;

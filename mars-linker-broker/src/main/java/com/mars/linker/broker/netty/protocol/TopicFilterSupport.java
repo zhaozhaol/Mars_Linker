@@ -1,4 +1,4 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.protocol;
 
 import java.util.Collections;
 import java.util.Map;
@@ -9,12 +9,12 @@ import java.util.concurrent.CopyOnWriteArraySet;
 /**
  * MQTT 主题过滤器工具与索引结构。
  */
-final class TopicFilterSupport {
+public final class TopicFilterSupport {
 
     private TopicFilterSupport() {
     }
 
-    static boolean isExactTopic(String topicFilter) {
+    public static boolean isExactTopic(String topicFilter) {
         return topicFilter != null
                 && !topicFilter.isEmpty()
                 && !topicFilter.contains("+")
@@ -22,11 +22,11 @@ final class TopicFilterSupport {
                 && !topicFilter.startsWith("$share/");
     }
 
-    static boolean isShareSubscription(String topicFilter) {
+    public static boolean isShareSubscription(String topicFilter) {
         return topicFilter != null && topicFilter.startsWith("$share/");
     }
 
-    static ShareSubscription parseShareSubscription(String topicFilter) {
+    public static ShareSubscription parseShareSubscription(String topicFilter) {
         if (!isShareSubscription(topicFilter)) {
             return null;
         }
@@ -46,7 +46,7 @@ final class TopicFilterSupport {
         return new ShareSubscription(group, filter);
     }
 
-    static boolean isValidTopicFilter(String topicFilter) {
+    public static boolean isValidTopicFilter(String topicFilter) {
         if (topicFilter == null || topicFilter.isEmpty() || isShareSubscription(topicFilter)) {
             return false;
         }
@@ -72,7 +72,7 @@ final class TopicFilterSupport {
         return true;
     }
 
-    static boolean matchTopicFilter(String filter, String topic) {
+    public static boolean matchTopicFilter(String filter, String topic) {
         if (filter == null || filter.isEmpty() || topic == null || topic.isEmpty()) {
             return false;
         }
@@ -103,20 +103,20 @@ final class TopicFilterSupport {
         return i == t.length;
     }
 
-    static final class ShareSubscription {
-        final String group;
-        final String filter;
+    public static final class ShareSubscription {
+        public final String group;
+        public final String filter;
 
-        private ShareSubscription(String group, String filter) {
+        public ShareSubscription(String group, String filter) {
             this.group = group;
             this.filter = filter;
         }
     }
 
-    static final class TopicFilterIndex {
+    public static final class TopicFilterIndex {
         private final TopicNode root = new TopicNode();
 
-        void add(String filter) {
+        public void add(String filter) {
             if (filter == null || filter.isEmpty()) {
                 return;
             }
@@ -136,7 +136,7 @@ final class TopicFilterSupport {
             cur.exactFilters.add(filter);
         }
 
-        void remove(String filter) {
+        public void remove(String filter) {
             if (filter == null || filter.isEmpty()) {
                 return;
             }
@@ -164,14 +164,14 @@ final class TopicFilterSupport {
             cur.exactFilters.remove(filter);
         }
 
-        void clear() {
+        public void clear() {
             root.children.clear();
             root.exactFilters.clear();
             root.hashFilters.clear();
             root.plus = null;
         }
 
-        Set<String> match(String topic) {
+        public Set<String> match(String topic) {
             if (topic == null || topic.isEmpty()) {
                 return Collections.emptySet();
             }

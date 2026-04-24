@@ -1,4 +1,4 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.acl;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * 失败策略：拉取失败/解析失败时保留上一版规则；启动阶段若尚未拉取成功，使用“默认拒绝（deny all）”。
  * </p>
  */
-final class HttpAclProvider implements AclProvider {
+public final class HttpAclProvider implements AclProvider {
     private static final Logger log = LoggerFactory.getLogger(HttpAclProvider.class);
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -50,7 +50,7 @@ final class HttpAclProvider implements AclProvider {
                     Collections.emptyList())
     );
 
-    HttpAclProvider(String url,
+    public HttpAclProvider(String url,
                     long connectTimeoutMs,
                     long requestTimeoutMs,
                     long refreshIntervalMs,
@@ -146,7 +146,7 @@ final class HttpAclProvider implements AclProvider {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    static final class AclRuleSet {
+    public static final class AclRuleSet {
         public Boolean enabled;
         public Boolean defaultDeny;
         public List<String> allowSubscribePrefixes;
@@ -154,7 +154,7 @@ final class HttpAclProvider implements AclProvider {
         public List<String> denySubscribePrefixes;
         public List<String> denyPublishPrefixes;
 
-        AclRuleSet normalized() {
+        public AclRuleSet normalized() {
             AclRuleSet n = new AclRuleSet();
             n.enabled = enabled;
             n.defaultDeny = defaultDeny;

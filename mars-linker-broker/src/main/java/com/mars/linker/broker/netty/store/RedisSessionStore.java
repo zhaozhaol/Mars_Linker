@@ -1,4 +1,4 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.store;
 
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
@@ -12,12 +12,13 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Redis 版 SessionStore（当前以全量快照语义对齐文件实现）。
  */
-final class RedisSessionStore implements SessionStore {
+public final class RedisSessionStore implements SessionStore {
     private static final Logger log = LoggerFactory.getLogger(RedisSessionStore.class);
 
     private final RedisClient client;
@@ -25,11 +26,12 @@ final class RedisSessionStore implements SessionStore {
     private final RedisCommands<String, String> cmd;
     private final String keyPrefix;
 
-    RedisSessionStore(RedisURI redisUri, String keyPrefix) {
+    public RedisSessionStore(RedisURI redisUri, String keyPrefix) {
         this.client = RedisClient.create(redisUri);
         this.connection = client.connect();
         this.cmd = connection.sync();
         this.keyPrefix = keyPrefix == null || keyPrefix.trim().isEmpty() ? "ml" : keyPrefix.trim();
+        this.cmd.ping(); // fail-fast: 验证 Redis 连接可用
     }
 
     @Override
@@ -37,7 +39,7 @@ final class RedisSessionStore implements SessionStore {
         Map<String, SessionService.Session> out = new ConcurrentHashMap<>();
         try {
             String indexKey = k("sess:index");
-            List<String> clientIds = cmd.smembers(indexKey);
+            Set<String> clientIds = cmd.smembers(indexKey);
             for (String clientId : clientIds) {
                 if (clientId == null || clientId.isEmpty()) {
                     continue;
@@ -73,7 +75,7 @@ final class RedisSessionStore implements SessionStore {
     public synchronized void persistAll(Map<String, SessionService.Session> sessions) {
         try {
             String indexKey = k("sess:index");
-            List<String> oldIds = cmd.smembers(indexKey);
+            Set<String> oldIds = cmd.smembers(indexKey);
             for (String oldId : oldIds) {
                 cmd.del(k("sess:" + oldId + ":subs"));
                 cmd.del(k("sess:" + oldId + ":offline"));
@@ -110,7 +112,7 @@ final class RedisSessionStore implements SessionStore {
     public synchronized void deleteIfExists() {
         try {
             String indexKey = k("sess:index");
-            List<String> ids = cmd.smembers(indexKey);
+            Set<String> ids = cmd.smembers(indexKey);
             for (String id : ids) {
                 cmd.del(k("sess:" + id + ":subs"));
                 cmd.del(k("sess:" + id + ":offline"));

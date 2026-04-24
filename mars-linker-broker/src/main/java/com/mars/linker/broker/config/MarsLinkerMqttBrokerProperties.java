@@ -75,7 +75,12 @@ public class MarsLinkerMqttBrokerProperties {
     private String retainStoreFilePath = "data/retain-store.tsv";
 
     /**
-     * Redis 存储配置（预留，后续实现）。
+     * 启动迁移开关：当 mode!=file 且开启时，从 file 存储加载一次数据并写入目标存储（幂等）。
+     */
+    private boolean storageMigrateOnStartup = false;
+
+    /**
+     * Redis 存储配置。
      */
     private String storageRedisAddress;
     private String storageRedisPassword;
@@ -84,7 +89,7 @@ public class MarsLinkerMqttBrokerProperties {
     private String storageRedisKeyPrefix = "ml";
 
     /**
-     * DB 存储配置（预留，后续实现）。
+     * DB 存储配置。
      */
     private String storageDbJdbcUrl;
     private String storageDbUsername;
@@ -206,7 +211,7 @@ public class MarsLinkerMqttBrokerProperties {
 
     /**
      * 动态 ACL HTTP 规则源（GET/JSON）。仅在 {@code aclEnabled=true} 且 {@code aclMode=http} 时必填。
-     * <p>规则 JSON 结构与 {@link com.mars.linker.broker.netty.HttpAclProvider.AclRuleSet} 一致。</p>
+     * <p>规则 JSON 结构与 {@link com.mars.linker.broker.netty.acl.HttpAclProvider.AclRuleSet} 一致。</p>
      */
     private String aclHttpUrl;
 
@@ -339,6 +344,14 @@ public class MarsLinkerMqttBrokerProperties {
 
     public void setRetainStoreFilePath(String retainStoreFilePath) {
         this.retainStoreFilePath = retainStoreFilePath;
+    }
+
+    public boolean isStorageMigrateOnStartup() {
+        return storageMigrateOnStartup;
+    }
+
+    public void setStorageMigrateOnStartup(boolean storageMigrateOnStartup) {
+        this.storageMigrateOnStartup = storageMigrateOnStartup;
     }
 
     public String getStorageRedisAddress() {

@@ -1,4 +1,4 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.acl;
 
 import com.mars.linker.broker.config.MarsLinkerMqttBrokerProperties;
 import org.slf4j.Logger;
@@ -9,13 +9,13 @@ import java.util.Collections;
 /**
  * 根据 {@link MarsLinkerMqttBrokerProperties} 构建 {@link AclProvider} 实例（静态或 HTTP 动态）。
  */
-final class AclProviderFactory {
+public final class AclProviderFactory {
     private static final Logger log = LoggerFactory.getLogger(AclProviderFactory.class);
 
     private AclProviderFactory() {
     }
 
-    static AclProvider create(MarsLinkerMqttBrokerProperties p) {
+    public static AclProvider create(MarsLinkerMqttBrokerProperties p) {
         if (p == null || !p.isAclEnabled()) {
             return new PrefixAclProvider(false,
                     Collections.emptyList(),

@@ -2,6 +2,8 @@ package com.mars.linker.broker;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
+import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 
 /**
  * NexusMQ Broker 应用启动入口。
@@ -13,7 +15,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  *   <li>MQTT 数据面：由 Netty 监听器在配置开启时启动。</li>
  * </ul>
  */
-@SpringBootApplication
+@SpringBootApplication(exclude = {DataSourceAutoConfiguration.class, RedisAutoConfiguration.class})
 public class MarsLinkerApplication {
 
     public static void main(String[] args) {

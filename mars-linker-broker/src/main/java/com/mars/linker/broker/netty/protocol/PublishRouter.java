@@ -1,4 +1,4 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.protocol;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -9,25 +9,26 @@ import org.slf4j.Logger;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import com.mars.linker.broker.netty.store.SessionService;
 
 /**
  * 发布路由与下行投递（QoS0/1）处理。
  */
-final class PublishRouter {
+public final class PublishRouter {
     private static final AttributeKey<Integer> PROTOCOL_LEVEL = AttributeKey.valueOf("mqtt_protocol_level");
 
-    interface PacketIdSupplier {
-        int next(ChannelHandlerContext ctx);
+    public interface PacketIdSupplier {
+        public int next(ChannelHandlerContext ctx);
     }
 
-    interface OutboundTracker {
-        void track(ChannelHandlerContext ctx, int packetId, String topic, byte[] payload, boolean retain);
+    public interface OutboundTracker {
+        public void track(ChannelHandlerContext ctx, int packetId, String topic, byte[] payload, boolean retain);
     }
 
     private PublishRouter() {
     }
 
-    static int publishAndEnqueueOffline(String topic,
+    public static int publishAndEnqueueOffline(String topic,
                                         byte[] payload,
                                         boolean retain,
                                         boolean dup,

@@ -1,4 +1,4 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.protocol;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -17,7 +17,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * QoS1 下行：packetId 分配、inflight 跟踪与可选重传（DUP=1）。
  */
-final class QoS1OutboundService {
+public final class QoS1OutboundService {
     private static final AttributeKey<Integer> PROTOCOL_LEVEL = AttributeKey.valueOf("mqtt_protocol_level");
 
     private static final AttributeKey<Set<Integer>> OUTBOUND_QOS1_INFLIGHT =
@@ -34,7 +34,7 @@ final class QoS1OutboundService {
     private final int retransmitMaxAttempts;
     private final Logger log;
 
-    QoS1OutboundService(boolean retransmitEnabled,
+    public QoS1OutboundService(boolean retransmitEnabled,
                         long retransmitIntervalMs,
                         int retransmitMaxAttempts,
                         Logger log) {
@@ -44,15 +44,15 @@ final class QoS1OutboundService {
         this.log = log;
     }
 
-    void onChannelActive(ChannelHandlerContext ctx) {
+    public void onChannelActive(ChannelHandlerContext ctx) {
         startRetransmitTaskIfNeeded(ctx);
     }
 
-    void onChannelInactive(ChannelHandlerContext ctx) {
+    public void onChannelInactive(ChannelHandlerContext ctx) {
         stopRetransmitTask(ctx);
     }
 
-    int nextPacketId(ChannelHandlerContext ctx) {
+    public int nextPacketId(ChannelHandlerContext ctx) {
         AtomicInteger id = ctx.channel().attr(NEXT_OUTBOUND_PACKET_ID).get();
         if (id == null) {
             id = new AtomicInteger(0);
@@ -67,7 +67,7 @@ final class QoS1OutboundService {
         });
     }
 
-    void track(ChannelHandlerContext ctx,
+    public void track(ChannelHandlerContext ctx,
                int packetId,
                String topic,
                byte[] payload,
@@ -89,7 +89,7 @@ final class QoS1OutboundService {
         m.put(packetId, new Inflight(topic, copy, retain));
     }
 
-    void onPubAck(ChannelHandlerContext ctx, int packetId) {
+    public void onPubAck(ChannelHandlerContext ctx, int packetId) {
         Set<Integer> inflight = ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT).get();
         if (inflight != null) {
             inflight.remove(packetId);
@@ -100,7 +100,7 @@ final class QoS1OutboundService {
         }
     }
 
-    void sendPublish(ChannelHandlerContext ctx,
+    public void sendPublish(ChannelHandlerContext ctx,
                      String topic,
                      int packetId,
                      byte[] payload,

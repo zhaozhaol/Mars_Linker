@@ -1,4 +1,4 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.auth;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,7 +23,7 @@ import java.time.Duration;
  * 说明：在 Netty I/O 线程上同步执行 HTTP 调用，会阻塞该 worker；生产环境应控制回调时延、并发与探活。
  * </p>
  */
-final class HttpAuthProvider implements AuthProvider {
+public final class HttpAuthProvider implements AuthProvider {
     private static final Logger log = LoggerFactory.getLogger(HttpAuthProvider.class);
 
     private final HttpClient httpClient;
@@ -31,7 +31,7 @@ final class HttpAuthProvider implements AuthProvider {
     private final Duration requestTimeout;
     private final String authorizationHeader;
 
-    HttpAuthProvider(String url, long connectTimeoutMs, long requestTimeoutMs, String authorizationHeader) {
+    public HttpAuthProvider(String url, long connectTimeoutMs, long requestTimeoutMs, String authorizationHeader) {
         this.endpoint = URI.create(url);
         this.requestTimeout = Duration.ofMillis(Math.max(1L, requestTimeoutMs));
         this.authorizationHeader = authorizationHeader;

@@ -1,4 +1,4 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.store;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,11 +14,12 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import com.mars.linker.broker.netty.protocol.TopicFilterSupport;
 
 /**
  * 文件版 session 持久化（PoC），格式保持与历史实现一致。
  */
-final class FileSessionStore implements SessionStore {
+public final class FileSessionStore implements SessionStore {
     private static final Logger log = LoggerFactory.getLogger(FileSessionStore.class);
 
     private static final String SESSION_STORE_VERSION = "v1";
@@ -28,7 +29,7 @@ final class FileSessionStore implements SessionStore {
 
     private final Path storePath;
 
-    FileSessionStore(Path storePath) {
+    public FileSessionStore(Path storePath) {
         this.storePath = storePath;
     }
 

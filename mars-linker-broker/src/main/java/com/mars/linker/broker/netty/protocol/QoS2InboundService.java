@@ -1,4 +1,4 @@
-package com.mars.linker.broker.netty;
+package com.mars.linker.broker.netty.protocol;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -15,7 +15,7 @@ import java.util.function.LongConsumer;
 /**
  * QoS2 上行：pending/completed 窗口管理与握手状态迁移。
  */
-final class QoS2InboundService {
+public final class QoS2InboundService {
     private static final AttributeKey<ConcurrentHashMap<Integer, PendingMessage>> INBOUND_QOS2_PENDING =
             AttributeKey.valueOf("mqtt_inbound_qos2_pending");
     private static final AttributeKey<Set<Integer>> INBOUND_QOS2_COMPLETED =
@@ -30,7 +30,7 @@ final class QoS2InboundService {
     private final int maxPendingPerConnection;
     private final Logger log;
 
-    QoS2InboundService(InboundPublishDispatcher inboundPublishDispatcher,
+    public QoS2InboundService(InboundPublishDispatcher inboundPublishDispatcher,
                        LongConsumer pendingDeltaRecorder,
                        Runnable completedRecorder,
                        int maxPendingPerConnection,
@@ -42,7 +42,7 @@ final class QoS2InboundService {
         this.log = log;
     }
 
-    void onInboundQos2Publish(ChannelHandlerContext ctx,
+    public void onInboundQos2Publish(ChannelHandlerContext ctx,
                               int packetId,
                               String topic,
                               byte[] payload,
@@ -63,7 +63,7 @@ final class QoS2InboundService {
                 topic, packetId, ctx.channel().id().asShortText());
     }
 
-    void onPubRel(ChannelHandlerContext ctx, int packetId) {
+    public void onPubRel(ChannelHandlerContext ctx, int packetId) {
         ConcurrentHashMap<Integer, PendingMessage> pending = ctx.channel().attr(INBOUND_QOS2_PENDING).get();
         PendingMessage msg = pending == null ? null : pending.remove(packetId);
         if (msg != null) {
@@ -78,7 +78,7 @@ final class QoS2InboundService {
         writePubComp(ctx, packetId);
     }
 
-    void onChannelInactive(ChannelHandlerContext ctx) {
+    public void onChannelInactive(ChannelHandlerContext ctx) {
         ConcurrentHashMap<Integer, PendingMessage> pending = ctx.channel().attr(INBOUND_QOS2_PENDING).get();
         if (pending != null && !pending.isEmpty()) {
             pendingDeltaRecorder.accept(-pending.size());
@@ -170,8 +170,8 @@ final class QoS2InboundService {
     }
 
     @FunctionalInterface
-    interface InboundPublishDispatcher {
-        int dispatch(ChannelHandlerContext ctx, String topic, byte[] payload, boolean retain, boolean dup, int qos);
+    public interface InboundPublishDispatcher {
+        public int dispatch(ChannelHandlerContext ctx, String topic, byte[] payload, boolean retain, boolean dup, int qos);
     }
 
     private static final class PendingMessage {

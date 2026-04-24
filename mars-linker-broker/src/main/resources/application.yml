@@ -24,6 +24,19 @@ mars:
       worker-threads: 0
       max-packet-bytes: 262144
       so-backlog: 1024
+      # --- 存储模式配置 ---
+      # storage-mode: file              # file(默认) / redis / db
+      # storage-migrate-on-startup: false # 启动时从 file 迁移到目标存储（仅 mode!=file 时生效）
+      # storage-redis-address: localhost:6379  # Redis 地址（mode=redis 时必填）
+      # storage-redis-password:               # Redis 密码（可选）
+      # storage-redis-database: 0             # Redis 数据库编号
+      # storage-redis-timeout-ms: 3000        # Redis 超时（毫秒）
+      # storage-redis-key-prefix: ml          # Redis key 前缀
+      # storage-db-jdbc-url: jdbc:postgresql://localhost:5432/mars_linker  # JDBC URL（mode=db 时必填）
+      # storage-db-username: postgres         # DB 用户名
+      # storage-db-password:                  # DB 密码
+      # storage-db-schema: public             # DB schema
+      # storage-db-table-prefix: ml_          # DB 表名前缀
       acl-enabled: false
       acl-default-deny: false
       acl-allow-subscribe-prefixes: []

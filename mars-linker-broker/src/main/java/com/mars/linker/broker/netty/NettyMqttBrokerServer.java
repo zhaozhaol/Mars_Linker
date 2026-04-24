@@ -19,6 +19,12 @@ import org.springframework.stereotype.Component;
 
 import java.util.concurrent.TimeUnit;
 import java.io.File;
+import com.mars.linker.broker.netty.acl.AclProviderFactory;
+import com.mars.linker.broker.netty.auth.AuthProviderFactory;
+import com.mars.linker.broker.netty.store.RetainStore;
+import com.mars.linker.broker.netty.store.SessionService;
+import com.mars.linker.broker.netty.store.SessionStore;
+import com.mars.linker.broker.netty.store.StoreFactory;
 
 /**
  * Netty TCP MQTT 监听入口（Spring {@link SmartLifecycle}，应用启动时 bind，停止时优雅关闭）。
@@ -52,6 +58,7 @@ public class NettyMqttBrokerServer implements SmartLifecycle {
         this.properties = properties;
         this.sessionStore = StoreFactory.createSessionStore(properties);
         this.retainStore = StoreFactory.createRetainStore(properties);
+        StoreFactory.migrateIfNeeded(properties, this.sessionStore, this.retainStore);
         this.mqttProtocolHandler = new MqttProtocolHandler(
                 AuthProviderFactory.create(properties),
                 AclProviderFactory.create(properties),
