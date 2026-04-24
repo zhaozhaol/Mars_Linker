@@ -1,0 +1,655 @@
+package com.mars.linker.broker.config;
+
+import com.mars.linker.broker.netty.MqttFrameDecoder;
+import com.mars.linker.broker.netty.NettyMqttBrokerServer;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * 自研 MQTT Broker 配置项（Spring Boot {@link ConfigurationProperties}）。
+ * <p>
+ * <b>职责边界</b>：仅承载配置，不包含任何业务逻辑；具体使用方见
+ * {@link NettyMqttBrokerServer} / {@link MqttFrameDecoder}。
+ * </p>
+ * <p>
+ * <b>测试备注</b>：建议至少覆盖两类验证：
+ * </p>
+ * <ul>
+ *   <li>配置绑定：在集成测试/本地启动时通过 YAML/ENV 覆盖 {@code tcpPort}、{@code maxPacketBytes}，确认生效。</li>
+ *   <li>边界行为：{@code maxPacketBytes} 变更后，超限帧应被 {@link MqttFrameDecoder} 关闭连接。</li>
+ * </ul>
+ */
+@ConfigurationProperties(prefix = "mars.linker.broker")
+public class MarsLinkerMqttBrokerProperties {
+
+    /**
+     * 是否启用 Netty MQTT 接入（默认 false，避免与本机 docker EMQX 端口冲突）。
+     */
+    private boolean nettyEnabled = false;
+
+    /**
+     * Netty MQTT TCP 监听端口（仅在 nettyEnabled=true 时使用）。
+     */
+    private int tcpPort = 11883;
+
+    /**
+     * Boss 线程数。
+     */
+    private int bossThreads = 1;
+
+    /**
+     * Worker 线程数；0 表示使用 CPU×2。
+     */
+    private int workerThreads = 0;
+
+    /**
+     * 单帧最大字节数（含固定头 + Remaining Length 编码 + 负载），超过则断开连接。
+     */
+    private int maxPacketBytes = 256 * 1024;
+
+    /**
+     * TCP 监听 backlog（对应 {@link io.netty.channel.ChannelOption#SO_BACKLOG}）。 
+     */
+    private int soBacklog = 1024;
+
+    /**
+     * Broker 总连接数上限；小于等于 0 表示不限制。
+     */
+    private int maxConnections = 0;
+
+    /**
+     * 持久化存储模式：file（默认）/redis/db。
+     */
+    private String storageMode = "file";
+
+    /**
+     * 文件存储：Session 数据文件路径。
+     */
+    private String sessionStoreFilePath = "data/session-store.tsv";
+
+    /**
+     * 文件存储：Retain 数据文件路径。
+     */
+    private String retainStoreFilePath = "data/retain-store.tsv";
+
+    /**
+     * Redis 存储配置（预留，后续实现）。
+     */
+    private String storageRedisAddress;
+    private String storageRedisPassword;
+    private int storageRedisDatabase = 0;
+    private long storageRedisTimeoutMs = 3_000L;
+    private String storageRedisKeyPrefix = "ml";
+
+    /**
+     * DB 存储配置（预留，后续实现）。
+     */
+    private String storageDbJdbcUrl;
+    private String storageDbUsername;
+    private String storageDbPassword;
+    private String storageDbSchema = "public";
+    private String storageDbTablePrefix = "ml_";
+
+    /**
+     * 是否启用 TLS/MQTTS（默认 false）。
+     * <p>
+     * 开启后将使用 {@code tlsPort} 监听，并在子通道管道最前面插入 TLS handler。
+     * </p>
+     */
+    private boolean tlsEnabled = false;
+
+    /**
+     * TLS/MQTTS 监听端口（仅在 {@code tlsEnabled=true} 时使用）。
+     */
+    private int tlsPort = 18884;
+
+    /**
+     * TLS 证书链文件路径（PEM），如 server.crt。
+     */
+    private String tlsCertChainPath;
+
+    /**
+     * TLS 私钥文件路径（PEM），如 server.key。
+     */
+    private String tlsPrivateKeyPath;
+
+    /**
+     * TLS 私钥口令（可选）。
+     */
+    private String tlsPrivateKeyPassword;
+
+    /**
+     * 是否启用 MQTT CONNECT 用户名/密码鉴权（默认关闭，便于本地联调）。
+     * <p>
+     * <b>失败策略</b>：开启后，若客户端未携带或校验失败，将返回 CONNACK returnCode=0x05（Not authorized）并关闭连接。
+     * </p>
+     */
+    private boolean authEnabled = false;
+
+    /**
+     * 鉴权用户名（仅在 {@code authEnabled=true} 时使用）。
+     */
+    private String authUsername;
+
+    /**
+     * 鉴权密码（仅在 {@code authEnabled=true} 时使用）。
+     */
+    private String authPassword;
+
+    /**
+     * 鉴权模式：{@code static} 使用本配置中的单账号；{@code http} 使用 HTTP 回调
+     * （{@code authHttpUrl} 等，见各字段说明）。
+     * <p>仅在 {@code authEnabled=true} 时有效；为 {@code false} 时忽略本项。</p>
+     */
+    private String authMode = "static";
+
+    /**
+     * 动态鉴权 HTTP 端点（POST，JSON body）。仅在 {@code authEnabled=true} 且 {@code authMode=http} 时必填。
+     * <p>成功条件：返回 2xx；否则判为鉴权失败。</p>
+     */
+    private String authHttpUrl;
+
+    /**
+     * HTTP 鉴权：连接超时（毫秒）。
+     */
+    private long authHttpConnectTimeoutMs = 2_000L;
+
+    /**
+     * HTTP 鉴权：整次请求超时（毫秒，含建连与读响应 body）。
+     */
+    private long authHttpRequestTimeoutMs = 5_000L;
+
+    /**
+     * 可选。若设置则每次回调请求会携带 {@code Authorization} 头（用于保护鉴权服务本身，如 Bearer 令牌）。
+     */
+    private String authHttpAuthorizationHeader;
+
+    /**
+     * 是否启用下行 QoS1 重传（默认关闭，避免阶段 4 初期产生“重复消息”误解）。
+     * <p>
+     * <b>行为</b>：对下发给订阅者的 QoS1 PUBLISH，在超时未收到 PUBACK 时重发同一 packetId，并置 DUP=1；
+     * 达到最大重传次数后停止重传（当前不强制断开连接）。
+     * </p>
+     */
+    private boolean qos1RetransmitEnabled = false;
+
+    /**
+     * 下行 QoS1 重传扫描/超时间隔（毫秒）。
+     */
+    private long qos1RetransmitIntervalMs = 5_000;
+
+    /**
+     * 下行 QoS1 最大重传次数（不含首次发送）。
+     */
+    private int qos1RetransmitMaxAttempts = 3;
+
+    /**
+     * 单连接上行 QoS2 pending 窗口上限；小于等于 0 表示不限制。
+     */
+    private int inboundQos2PendingMax = 1024;
+
+    /**
+     * 是否启用 ACL（默认关闭，便于本地联调）。
+     * <p>
+     * <b>说明</b>：当前 ACL 按“主题前缀”策略工作；可选 HTTP 动态来源，支持热更新。
+     * </p>
+     */
+    private boolean aclEnabled = false;
+
+    /**
+     * ACL 模式：{@code static} 使用本配置中的前缀列表；{@code http} 使用 HTTP 拉取规则并定时热更新。
+     * <p>仅在 {@code aclEnabled=true} 时有效；为 {@code false} 时忽略本项。</p>
+     */
+    private String aclMode = "static";
+
+    /**
+     * 动态 ACL HTTP 规则源（GET/JSON）。仅在 {@code aclEnabled=true} 且 {@code aclMode=http} 时必填。
+     * <p>规则 JSON 结构与 {@link com.mars.linker.broker.netty.HttpAclProvider.AclRuleSet} 一致。</p>
+     */
+    private String aclHttpUrl;
+
+    /**
+     * HTTP ACL：连接超时（毫秒）。
+     */
+    private long aclHttpConnectTimeoutMs = 2_000L;
+
+    /**
+     * HTTP ACL：整次请求超时（毫秒）。
+     */
+    private long aclHttpRequestTimeoutMs = 5_000L;
+
+    /**
+     * HTTP ACL：拉取间隔（毫秒）。仅在 http 模式下使用。
+     */
+    private long aclHttpRefreshIntervalMs = 10_000L;
+
+    /**
+     * 可选。若设置则每次拉取请求会携带 {@code Authorization} 头。
+     */
+    private String aclHttpAuthorizationHeader;
+
+    /**
+     * 允许 SUBSCRIBE 的 topicFilter 前缀（命中任意一个即允许）。为空表示全部允许。
+     * <p>
+     * 注意：此处按字符串前缀匹配，不做 topic 结构语义解析；建议使用稳定的业务前缀如 {@code dev/}、{@code up/}。
+     * </p>
+     */
+    private List<String> aclAllowSubscribePrefixes = new ArrayList<>();
+
+    /**
+     * 允许 PUBLISH 的 topic 前缀（命中任意一个即允许）。为空表示全部允许。
+     */
+    private List<String> aclAllowPublishPrefixes = new ArrayList<>();
+
+    /**
+     * ACL 默认拒绝策略（默认 false）。
+     * <p>
+     * 为 false 时：allow 列表为空表示“允许全部”；为 true 时：allow 列表为空表示“拒绝全部”。
+     * </p>
+     */
+    private boolean aclDefaultDeny = false;
+
+    /**
+     * 明确拒绝 SUBSCRIBE 的 topicFilter 前缀（命中任意一个立即拒绝，优先级高于 allow）。
+     */
+    private List<String> aclDenySubscribePrefixes = new ArrayList<>();
+
+    /**
+     * 明确拒绝 PUBLISH 的 topic 前缀（命中任意一个立即拒绝，优先级高于 allow）。
+     */
+    private List<String> aclDenyPublishPrefixes = new ArrayList<>();
+
+    public boolean isNettyEnabled() {
+        return nettyEnabled;
+    }
+
+    public void setNettyEnabled(boolean nettyEnabled) {
+        this.nettyEnabled = nettyEnabled;
+    }
+
+    public int getTcpPort() {
+        return tcpPort;
+    }
+
+    public void setTcpPort(int tcpPort) {
+        this.tcpPort = tcpPort;
+    }
+
+    public int getBossThreads() {
+        return bossThreads;
+    }
+
+    public void setBossThreads(int bossThreads) {
+        this.bossThreads = bossThreads;
+    }
+
+    public int getWorkerThreads() {
+        return workerThreads;
+    }
+
+    public void setWorkerThreads(int workerThreads) {
+        this.workerThreads = workerThreads;
+    }
+
+    public int getMaxPacketBytes() {
+        return maxPacketBytes;
+    }
+
+    public void setMaxPacketBytes(int maxPacketBytes) {
+        this.maxPacketBytes = maxPacketBytes;
+    }
+
+    public int getSoBacklog() {
+        return soBacklog;
+    }
+
+    public void setSoBacklog(int soBacklog) {
+        this.soBacklog = soBacklog;
+    }
+
+    public int getMaxConnections() {
+        return maxConnections;
+    }
+
+    public void setMaxConnections(int maxConnections) {
+        this.maxConnections = maxConnections;
+    }
+
+    public String getStorageMode() {
+        return storageMode;
+    }
+
+    public void setStorageMode(String storageMode) {
+        this.storageMode = storageMode;
+    }
+
+    public String getSessionStoreFilePath() {
+        return sessionStoreFilePath;
+    }
+
+    public void setSessionStoreFilePath(String sessionStoreFilePath) {
+        this.sessionStoreFilePath = sessionStoreFilePath;
+    }
+
+    public String getRetainStoreFilePath() {
+        return retainStoreFilePath;
+    }
+
+    public void setRetainStoreFilePath(String retainStoreFilePath) {
+        this.retainStoreFilePath = retainStoreFilePath;
+    }
+
+    public String getStorageRedisAddress() {
+        return storageRedisAddress;
+    }
+
+    public void setStorageRedisAddress(String storageRedisAddress) {
+        this.storageRedisAddress = storageRedisAddress;
+    }
+
+    public String getStorageRedisPassword() {
+        return storageRedisPassword;
+    }
+
+    public void setStorageRedisPassword(String storageRedisPassword) {
+        this.storageRedisPassword = storageRedisPassword;
+    }
+
+    public int getStorageRedisDatabase() {
+        return storageRedisDatabase;
+    }
+
+    public void setStorageRedisDatabase(int storageRedisDatabase) {
+        this.storageRedisDatabase = storageRedisDatabase;
+    }
+
+    public long getStorageRedisTimeoutMs() {
+        return storageRedisTimeoutMs;
+    }
+
+    public void setStorageRedisTimeoutMs(long storageRedisTimeoutMs) {
+        this.storageRedisTimeoutMs = storageRedisTimeoutMs;
+    }
+
+    public String getStorageRedisKeyPrefix() {
+        return storageRedisKeyPrefix;
+    }
+
+    public void setStorageRedisKeyPrefix(String storageRedisKeyPrefix) {
+        this.storageRedisKeyPrefix = storageRedisKeyPrefix;
+    }
+
+    public String getStorageDbJdbcUrl() {
+        return storageDbJdbcUrl;
+    }
+
+    public void setStorageDbJdbcUrl(String storageDbJdbcUrl) {
+        this.storageDbJdbcUrl = storageDbJdbcUrl;
+    }
+
+    public String getStorageDbUsername() {
+        return storageDbUsername;
+    }
+
+    public void setStorageDbUsername(String storageDbUsername) {
+        this.storageDbUsername = storageDbUsername;
+    }
+
+    public String getStorageDbPassword() {
+        return storageDbPassword;
+    }
+
+    public void setStorageDbPassword(String storageDbPassword) {
+        this.storageDbPassword = storageDbPassword;
+    }
+
+    public String getStorageDbSchema() {
+        return storageDbSchema;
+    }
+
+    public void setStorageDbSchema(String storageDbSchema) {
+        this.storageDbSchema = storageDbSchema;
+    }
+
+    public String getStorageDbTablePrefix() {
+        return storageDbTablePrefix;
+    }
+
+    public void setStorageDbTablePrefix(String storageDbTablePrefix) {
+        this.storageDbTablePrefix = storageDbTablePrefix;
+    }
+
+    public boolean isTlsEnabled() {
+        return tlsEnabled;
+    }
+
+    public void setTlsEnabled(boolean tlsEnabled) {
+        this.tlsEnabled = tlsEnabled;
+    }
+
+    public int getTlsPort() {
+        return tlsPort;
+    }
+
+    public void setTlsPort(int tlsPort) {
+        this.tlsPort = tlsPort;
+    }
+
+    public String getTlsCertChainPath() {
+        return tlsCertChainPath;
+    }
+
+    public void setTlsCertChainPath(String tlsCertChainPath) {
+        this.tlsCertChainPath = tlsCertChainPath;
+    }
+
+    public String getTlsPrivateKeyPath() {
+        return tlsPrivateKeyPath;
+    }
+
+    public void setTlsPrivateKeyPath(String tlsPrivateKeyPath) {
+        this.tlsPrivateKeyPath = tlsPrivateKeyPath;
+    }
+
+    public String getTlsPrivateKeyPassword() {
+        return tlsPrivateKeyPassword;
+    }
+
+    public void setTlsPrivateKeyPassword(String tlsPrivateKeyPassword) {
+        this.tlsPrivateKeyPassword = tlsPrivateKeyPassword;
+    }
+
+    public boolean isAuthEnabled() {
+        return authEnabled;
+    }
+
+    public void setAuthEnabled(boolean authEnabled) {
+        this.authEnabled = authEnabled;
+    }
+
+    public String getAuthUsername() {
+        return authUsername;
+    }
+
+    public void setAuthUsername(String authUsername) {
+        this.authUsername = authUsername;
+    }
+
+    public String getAuthPassword() {
+        return authPassword;
+    }
+
+    public void setAuthPassword(String authPassword) {
+        this.authPassword = authPassword;
+    }
+
+    public String getAuthMode() {
+        return authMode;
+    }
+
+    public void setAuthMode(String authMode) {
+        this.authMode = authMode;
+    }
+
+    public String getAuthHttpUrl() {
+        return authHttpUrl;
+    }
+
+    public void setAuthHttpUrl(String authHttpUrl) {
+        this.authHttpUrl = authHttpUrl;
+    }
+
+    public long getAuthHttpConnectTimeoutMs() {
+        return authHttpConnectTimeoutMs;
+    }
+
+    public void setAuthHttpConnectTimeoutMs(long authHttpConnectTimeoutMs) {
+        this.authHttpConnectTimeoutMs = authHttpConnectTimeoutMs;
+    }
+
+    public long getAuthHttpRequestTimeoutMs() {
+        return authHttpRequestTimeoutMs;
+    }
+
+    public void setAuthHttpRequestTimeoutMs(long authHttpRequestTimeoutMs) {
+        this.authHttpRequestTimeoutMs = authHttpRequestTimeoutMs;
+    }
+
+    public String getAuthHttpAuthorizationHeader() {
+        return authHttpAuthorizationHeader;
+    }
+
+    public void setAuthHttpAuthorizationHeader(String authHttpAuthorizationHeader) {
+        this.authHttpAuthorizationHeader = authHttpAuthorizationHeader;
+    }
+
+    public boolean isAclEnabled() {
+        return aclEnabled;
+    }
+
+    public void setAclEnabled(boolean aclEnabled) {
+        this.aclEnabled = aclEnabled;
+    }
+
+    public String getAclMode() {
+        return aclMode;
+    }
+
+    public void setAclMode(String aclMode) {
+        this.aclMode = aclMode;
+    }
+
+    public String getAclHttpUrl() {
+        return aclHttpUrl;
+    }
+
+    public void setAclHttpUrl(String aclHttpUrl) {
+        this.aclHttpUrl = aclHttpUrl;
+    }
+
+    public long getAclHttpConnectTimeoutMs() {
+        return aclHttpConnectTimeoutMs;
+    }
+
+    public void setAclHttpConnectTimeoutMs(long aclHttpConnectTimeoutMs) {
+        this.aclHttpConnectTimeoutMs = aclHttpConnectTimeoutMs;
+    }
+
+    public long getAclHttpRequestTimeoutMs() {
+        return aclHttpRequestTimeoutMs;
+    }
+
+    public void setAclHttpRequestTimeoutMs(long aclHttpRequestTimeoutMs) {
+        this.aclHttpRequestTimeoutMs = aclHttpRequestTimeoutMs;
+    }
+
+    public long getAclHttpRefreshIntervalMs() {
+        return aclHttpRefreshIntervalMs;
+    }
+
+    public void setAclHttpRefreshIntervalMs(long aclHttpRefreshIntervalMs) {
+        this.aclHttpRefreshIntervalMs = aclHttpRefreshIntervalMs;
+    }
+
+    public String getAclHttpAuthorizationHeader() {
+        return aclHttpAuthorizationHeader;
+    }
+
+    public void setAclHttpAuthorizationHeader(String aclHttpAuthorizationHeader) {
+        this.aclHttpAuthorizationHeader = aclHttpAuthorizationHeader;
+    }
+
+    public boolean isQos1RetransmitEnabled() {
+        return qos1RetransmitEnabled;
+    }
+
+    public void setQos1RetransmitEnabled(boolean qos1RetransmitEnabled) {
+        this.qos1RetransmitEnabled = qos1RetransmitEnabled;
+    }
+
+    public long getQos1RetransmitIntervalMs() {
+        return qos1RetransmitIntervalMs;
+    }
+
+    public void setQos1RetransmitIntervalMs(long qos1RetransmitIntervalMs) {
+        this.qos1RetransmitIntervalMs = qos1RetransmitIntervalMs;
+    }
+
+    public int getQos1RetransmitMaxAttempts() {
+        return qos1RetransmitMaxAttempts;
+    }
+
+    public void setQos1RetransmitMaxAttempts(int qos1RetransmitMaxAttempts) {
+        this.qos1RetransmitMaxAttempts = qos1RetransmitMaxAttempts;
+    }
+
+    public int getInboundQos2PendingMax() {
+        return inboundQos2PendingMax;
+    }
+
+    public void setInboundQos2PendingMax(int inboundQos2PendingMax) {
+        this.inboundQos2PendingMax = inboundQos2PendingMax;
+    }
+
+    public List<String> getAclAllowSubscribePrefixes() {
+        return aclAllowSubscribePrefixes;
+    }
+
+    public void setAclAllowSubscribePrefixes(List<String> aclAllowSubscribePrefixes) {
+        this.aclAllowSubscribePrefixes = aclAllowSubscribePrefixes;
+    }
+
+    public List<String> getAclAllowPublishPrefixes() {
+        return aclAllowPublishPrefixes;
+    }
+
+    public void setAclAllowPublishPrefixes(List<String> aclAllowPublishPrefixes) {
+        this.aclAllowPublishPrefixes = aclAllowPublishPrefixes;
+    }
+
+    public boolean isAclDefaultDeny() {
+        return aclDefaultDeny;
+    }
+
+    public void setAclDefaultDeny(boolean aclDefaultDeny) {
+        this.aclDefaultDeny = aclDefaultDeny;
+    }
+
+    public List<String> getAclDenySubscribePrefixes() {
+        return aclDenySubscribePrefixes;
+    }
+
+    public void setAclDenySubscribePrefixes(List<String> aclDenySubscribePrefixes) {
+        this.aclDenySubscribePrefixes = aclDenySubscribePrefixes;
+    }
+
+    public List<String> getAclDenyPublishPrefixes() {
+        return aclDenyPublishPrefixes;
+    }
+
+    public void setAclDenyPublishPrefixes(List<String> aclDenyPublishPrefixes) {
+        this.aclDenyPublishPrefixes = aclDenyPublishPrefixes;
+    }
+}

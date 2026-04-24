@@ -1,0 +1,37 @@
+spring:
+  application:
+    name: mars-linker-broker
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+
+# 自研 Broker（阶段 2 起实现 Netty）；默认关闭以免占用端口
+mars:
+  linker:
+    broker:
+      netty-enabled: true
+      tcp-port: 11883
+      boss-threads: 1
+      worker-threads: 0
+      max-packet-bytes: 262144
+      so-backlog: 1024
+      acl-enabled: false
+      acl-default-deny: false
+      acl-allow-subscribe-prefixes: []
+      acl-allow-publish-prefixes: []
+      acl-deny-subscribe-prefixes: []
+      acl-deny-publish-prefixes: []
+
+logging:
+  level:
+    root: INFO
+    com.nexus.mqtt.broker: INFO
