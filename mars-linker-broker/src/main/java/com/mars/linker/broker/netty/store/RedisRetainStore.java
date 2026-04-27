@@ -18,13 +18,14 @@ import java.util.Map;
 public final class RedisRetainStore implements RetainStore {
     private static final Logger log = LoggerFactory.getLogger(RedisRetainStore.class);
 
+    private final RedisClient client;
     private final StatefulRedisConnection<String, String> connection;
     private final RedisCommands<String, String> cmd;
     private final String retainKey;
 
     public RedisRetainStore(RedisURI redisUri, String keyPrefix) {
-        RedisClient client = RedisClient.create(redisUri);
-        this.connection = client.connect();
+        this.client = RedisClient.create(redisUri);
+        this.connection = this.client.connect();
         this.cmd = connection.sync();
         String p = keyPrefix == null || keyPrefix.trim().isEmpty() ? "ml" : keyPrefix.trim();
         this.retainKey = p + ":retain";
@@ -79,6 +80,20 @@ public final class RedisRetainStore implements RetainStore {
             return new RetainedMessage(topic, payload, qos);
         } catch (RuntimeException e) {
             return null;
+        }
+    }
+
+    @Override
+    public synchronized void close() {
+        try {
+            connection.close();
+        } catch (RuntimeException e) {
+            log.debug("RedisRetainStore connection 关闭异常", e);
+        }
+        try {
+            client.shutdown();
+        } catch (RuntimeException e) {
+            log.debug("RedisRetainStore client 关闭异常", e);
         }
     }
 }

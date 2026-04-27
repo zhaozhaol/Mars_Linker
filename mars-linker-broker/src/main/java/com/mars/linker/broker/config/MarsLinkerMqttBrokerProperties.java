@@ -65,6 +65,12 @@ public class MarsLinkerMqttBrokerProperties {
     private String storageMode = "file";
 
     /**
+     * 是否启用持久化（总开关）。
+     * 关闭时：Session/Retain 不会写入 file/redis/db，仅内存运行。
+     */
+    private boolean storageEnabled = true;
+
+    /**
      * 文件存储：Session 数据文件路径。
      */
     private String sessionStoreFilePath = "data/session-store.tsv";
@@ -96,6 +102,26 @@ public class MarsLinkerMqttBrokerProperties {
     private String storageDbPassword;
     private String storageDbSchema = "public";
     private String storageDbTablePrefix = "ml_";
+
+    /**
+     * 每个 client 持久化离线消息上限；小于等于 0 表示不限制。
+     */
+    private int sessionOfflineMaxMessages = 10_000;
+
+    /**
+     * 离线消息持久化保留时长（毫秒）；小于等于 0 表示不过期。
+     */
+    private long sessionOfflineTtlMs = 7L * 24 * 60 * 60 * 1000;
+
+    /**
+     * retain 消息总量上限；小于等于 0 表示不限制。
+     */
+    private int retainMaxMessages = 100_000;
+
+    /**
+     * retain 消息保留时长（毫秒）；小于等于 0 表示不过期。
+     */
+    private long retainTtlMs = 30L * 24 * 60 * 60 * 1000;
 
     /**
      * 是否启用 TLS/MQTTS（默认 false）。
@@ -330,6 +356,14 @@ public class MarsLinkerMqttBrokerProperties {
         this.storageMode = storageMode;
     }
 
+    public boolean isStorageEnabled() {
+        return storageEnabled;
+    }
+
+    public void setStorageEnabled(boolean storageEnabled) {
+        this.storageEnabled = storageEnabled;
+    }
+
     public String getSessionStoreFilePath() {
         return sessionStoreFilePath;
     }
@@ -432,6 +466,38 @@ public class MarsLinkerMqttBrokerProperties {
 
     public void setStorageDbTablePrefix(String storageDbTablePrefix) {
         this.storageDbTablePrefix = storageDbTablePrefix;
+    }
+
+    public int getSessionOfflineMaxMessages() {
+        return sessionOfflineMaxMessages;
+    }
+
+    public void setSessionOfflineMaxMessages(int sessionOfflineMaxMessages) {
+        this.sessionOfflineMaxMessages = sessionOfflineMaxMessages;
+    }
+
+    public long getSessionOfflineTtlMs() {
+        return sessionOfflineTtlMs;
+    }
+
+    public void setSessionOfflineTtlMs(long sessionOfflineTtlMs) {
+        this.sessionOfflineTtlMs = sessionOfflineTtlMs;
+    }
+
+    public int getRetainMaxMessages() {
+        return retainMaxMessages;
+    }
+
+    public void setRetainMaxMessages(int retainMaxMessages) {
+        this.retainMaxMessages = retainMaxMessages;
+    }
+
+    public long getRetainTtlMs() {
+        return retainTtlMs;
+    }
+
+    public void setRetainTtlMs(long retainTtlMs) {
+        this.retainTtlMs = retainTtlMs;
     }
 
     public boolean isTlsEnabled() {

@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +33,11 @@ public final class RedisSessionStore implements SessionStore {
         this.cmd = connection.sync();
         this.keyPrefix = keyPrefix == null || keyPrefix.trim().isEmpty() ? "ml" : keyPrefix.trim();
         this.cmd.ping(); // fail-fast: 验证 Redis 连接可用
+    }
+
+    @Override
+    public boolean supportsIncrementalPersist() {
+        return true;
     }
 
     @Override
@@ -76,11 +82,17 @@ public final class RedisSessionStore implements SessionStore {
         try {
             String indexKey = k("sess:index");
             Set<String> oldIds = cmd.smembers(indexKey);
-            for (String oldId : oldIds) {
-                cmd.del(k("sess:" + oldId + ":subs"));
-                cmd.del(k("sess:" + oldId + ":offline"));
+            if (!oldIds.isEmpty()) {
+                List<String> keysToDelete = new ArrayList<>(oldIds.size() * 2 + 1);
+                for (String oldId : oldIds) {
+                    keysToDelete.add(k("sess:" + oldId + ":subs"));
+                    keysToDelete.add(k("sess:" + oldId + ":offline"));
+                }
+                keysToDelete.add(indexKey);
+                cmd.del(keysToDelete.toArray(new String[0]));
+            } else {
+                cmd.del(indexKey);
             }
-            cmd.del(indexKey);
 
             for (SessionService.Session s : sessions.values()) {
                 if (s == null || s.clientId == null || s.clientId.isEmpty()) {
@@ -96,11 +108,15 @@ public final class RedisSessionStore implements SessionStore {
                     cmd.hmset(subKey, subMap);
                 }
                 String offlineKey = k("sess:" + s.clientId + ":offline");
+                List<String> encoded = new ArrayList<>(s.offlineQueue.size());
                 for (SessionService.QueuedMessage q : s.offlineQueue) {
                     String line = encodeOffline(q);
                     if (line != null) {
-                        cmd.rpush(offlineKey, line);
+                        encoded.add(line);
                     }
+                }
+                if (!encoded.isEmpty()) {
+                    cmd.rpush(offlineKey, encoded.toArray(new String[0]));
                 }
             }
         } catch (RuntimeException e) {
@@ -109,15 +125,68 @@ public final class RedisSessionStore implements SessionStore {
     }
 
     @Override
+    public synchronized void persistClient(SessionService.Session s) {
+        if (s == null || s.clientId == null || s.clientId.isEmpty()) {
+            return;
+        }
+        try {
+            String indexKey = k("sess:index");
+            String subKey = k("sess:" + s.clientId + ":subs");
+            String offlineKey = k("sess:" + s.clientId + ":offline");
+            cmd.sadd(indexKey, s.clientId);
+            cmd.del(subKey);
+            cmd.del(offlineKey);
+            Map<String, String> subMap = new LinkedHashMap<>();
+            for (Map.Entry<String, Integer> sub : s.subscriptionsQos.entrySet()) {
+                subMap.put(sub.getKey(), String.valueOf(sub.getValue() == null ? 0 : sub.getValue()));
+            }
+            if (!subMap.isEmpty()) {
+                cmd.hmset(subKey, subMap);
+            }
+            List<String> encoded = new ArrayList<>(s.offlineQueue.size());
+            for (SessionService.QueuedMessage q : s.offlineQueue) {
+                String line = encodeOffline(q);
+                if (line != null) {
+                    encoded.add(line);
+                }
+            }
+            if (!encoded.isEmpty()) {
+                cmd.rpush(offlineKey, encoded.toArray(new String[0]));
+            }
+        } catch (RuntimeException e) {
+            log.warn("RedisSessionStore persistClient 失败 clientId={}", s.clientId, e);
+        }
+    }
+
+    @Override
+    public synchronized void deleteClient(String clientId) {
+        if (clientId == null || clientId.isEmpty()) {
+            return;
+        }
+        try {
+            cmd.srem(k("sess:index"), clientId);
+            cmd.del(k("sess:" + clientId + ":subs"), k("sess:" + clientId + ":offline"));
+        } catch (RuntimeException e) {
+            log.warn("RedisSessionStore deleteClient 失败 clientId={}", clientId, e);
+        }
+    }
+
+    @Override
     public synchronized void deleteIfExists() {
         try {
             String indexKey = k("sess:index");
             Set<String> ids = cmd.smembers(indexKey);
-            for (String id : ids) {
-                cmd.del(k("sess:" + id + ":subs"));
-                cmd.del(k("sess:" + id + ":offline"));
+            if (!ids.isEmpty()) {
+                List<String> keysToDelete = new ArrayList<>(ids.size() * 2 + 1);
+                for (String id : ids) {
+                    keysToDelete.add(k("sess:" + id + ":subs"));
+                    keysToDelete.add(k("sess:" + id + ":offline"));
+                }
+                keysToDelete.add(indexKey);
+                cmd.del(keysToDelete.toArray(new String[0]));
+            } else {
+                cmd.del(indexKey);
             }
-            cmd.del(indexKey);
         } catch (RuntimeException e) {
             log.warn("RedisSessionStore deleteIfExists 失败", e);
         }
@@ -131,7 +200,7 @@ public final class RedisSessionStore implements SessionStore {
         if (q == null || q.topic == null || q.payload == null) {
             return null;
         }
-        return q.topic + "\t" + q.qos + "\t" + (q.retain ? "1" : "0") + "\t"
+        return q.topic + "\t" + q.qos + "\t" + (q.retain ? "1" : "0") + "\t" + q.createdAtMs + "\t"
                 + Base64.getEncoder().encodeToString(q.payload);
     }
 
@@ -139,18 +208,40 @@ public final class RedisSessionStore implements SessionStore {
         if (line == null) {
             return null;
         }
-        String[] p = line.split("\t", 4);
-        if (p.length != 4) {
+        String[] p = line.split("\t", 5);
+        if (p.length < 4) {
             return null;
         }
         try {
             String topic = p[0];
             int qos = Integer.parseInt(p[1]);
             boolean retain = "1".equals(p[2]);
-            byte[] payload = Base64.getDecoder().decode(p[3].getBytes(StandardCharsets.UTF_8));
-            return new SessionService.QueuedMessage(topic, payload, retain, qos);
+            long createdAtMs;
+            byte[] payload;
+            if (p.length >= 5) {
+                createdAtMs = Long.parseLong(p[3]);
+                payload = Base64.getDecoder().decode(p[4].getBytes(StandardCharsets.UTF_8));
+            } else {
+                createdAtMs = System.currentTimeMillis();
+                payload = Base64.getDecoder().decode(p[3].getBytes(StandardCharsets.UTF_8));
+            }
+            return new SessionService.QueuedMessage(topic, payload, retain, qos, createdAtMs);
         } catch (RuntimeException e) {
             return null;
+        }
+    }
+
+    @Override
+    public synchronized void close() {
+        try {
+            connection.close();
+        } catch (RuntimeException e) {
+            log.debug("RedisSessionStore connection 关闭异常", e);
+        }
+        try {
+            client.shutdown();
+        } catch (RuntimeException e) {
+            log.debug("RedisSessionStore client 关闭异常", e);
         }
     }
 }

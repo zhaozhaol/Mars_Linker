@@ -5,7 +5,7 @@ import java.util.List;
 /**
  * Retain 消息存储抽象，便于后续切换为外部存储实现。
  */
-public interface RetainStore {
+public interface RetainStore extends AutoCloseable {
 
     public final class RetainedMessage {
         public final String topic;
@@ -24,4 +24,9 @@ public interface RetainStore {
     public void remove(String topic);
 
     public List<RetainedMessage> list();
+
+    @Override
+    default void close() {
+        // no-op by default
+    }
 }

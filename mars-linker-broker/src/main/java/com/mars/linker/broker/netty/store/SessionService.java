@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -37,28 +38,43 @@ public final class SessionService {
         public final byte[] payload;
         public final boolean retain;
         public final int qos;
+        public final long createdAtMs;
 
         public QueuedMessage(String topic, byte[] payload, boolean retain, int qos) {
+            this(topic, payload, retain, qos, System.currentTimeMillis());
+        }
+
+        public QueuedMessage(String topic, byte[] payload, boolean retain, int qos, long createdAtMs) {
             this.topic = topic;
             this.payload = payload;
             this.retain = retain;
             this.qos = qos;
+            this.createdAtMs = createdAtMs;
         }
     }
 
     private final SessionStore store;
     private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>();
+    private final int offlineMaxMessages;
+    private final long offlineTtlMs;
     private final ScheduledExecutorService persistExecutor;
     private final AtomicBoolean persistDirty = new AtomicBoolean(false);
     private final Object persistTaskLock = new Object();
     private volatile ScheduledFuture<?> pendingPersistTask;
+    private final Set<String> dirtyClientIds = ConcurrentHashMap.newKeySet();
+    private final Set<String> removedClientIds = ConcurrentHashMap.newKeySet();
+    private final AtomicBoolean fullPersistDirty = new AtomicBoolean(false);
 
     public static final SessionService INSTANCE = new SessionService(
-            new FileSessionStore(java.nio.file.Paths.get("data", "session-store.tsv"))
+            new FileSessionStore(java.nio.file.Paths.get("data", "session-store.tsv")),
+            10_000,
+            7L * 24 * 60 * 60 * 1000
     );
 
-    private SessionService(SessionStore store) {
+    private SessionService(SessionStore store, int offlineMaxMessages, long offlineTtlMs) {
         this.store = store;
+        this.offlineMaxMessages = offlineMaxMessages;
+        this.offlineTtlMs = offlineTtlMs;
         ThreadFactory tf = r -> {
             Thread t = new Thread(r, "session-store-persist");
             t.setDaemon(true);
@@ -67,16 +83,24 @@ public final class SessionService {
         this.persistExecutor = Executors.newSingleThreadScheduledExecutor(tf);
         Runtime.getRuntime().addShutdownHook(new Thread(this::shutdownAndFlush, "session-store-shutdown"));
         this.sessions.putAll(store.loadAll());
+        long now = System.currentTimeMillis();
+        for (Session session : this.sessions.values()) {
+            pruneOfflineQueue(session, now);
+        }
         if (!sessions.isEmpty()) {
             log.info("已加载持久化会话 {} 个", sessions.size());
         }
     }
 
     public static SessionService create(SessionStore store) {
+        return create(store, 10_000, 7L * 24 * 60 * 60 * 1000);
+    }
+
+    public static SessionService create(SessionStore store, int offlineMaxMessages, long offlineTtlMs) {
         if (store == null) {
             return INSTANCE;
         }
-        return new SessionService(store);
+        return new SessionService(store, offlineMaxMessages, offlineTtlMs);
     }
 
     public Session getOrCreate(String clientId) {
@@ -92,6 +116,8 @@ public final class SessionService {
             return;
         }
         sessions.remove(clientId);
+        removedClientIds.add(clientId);
+        dirtyClientIds.remove(clientId);
         persist();
     }
 
@@ -100,8 +126,31 @@ public final class SessionService {
     }
 
     public void persist() {
+        fullPersistDirty.set(true);
         persistDirty.set(true);
         schedulePersistIfNeeded();
+    }
+
+    public void persist(String clientId) {
+        if (clientId == null || clientId.isEmpty()) {
+            persist();
+            return;
+        }
+        dirtyClientIds.add(clientId);
+        removedClientIds.remove(clientId);
+        persistDirty.set(true);
+        schedulePersistIfNeeded();
+    }
+
+    public boolean enqueueOfflineMessage(Session session, String topic, byte[] payload, boolean retain, int qos) {
+        if (session == null || topic == null || payload == null) {
+            return false;
+        }
+        byte[] copy = new byte[payload.length];
+        System.arraycopy(payload, 0, copy, 0, payload.length);
+        session.offlineQueue.add(new QueuedMessage(topic, copy, retain, qos, System.currentTimeMillis()));
+        pruneOfflineQueue(session, System.currentTimeMillis());
+        return true;
     }
 
     private void flushPersistIfDirty() {
@@ -109,7 +158,29 @@ public final class SessionService {
             if (!persistDirty.compareAndSet(true, false)) {
                 return;
             }
-            store.persistAll(sessions);
+            long now = System.currentTimeMillis();
+            for (Session session : sessions.values()) {
+                pruneOfflineQueue(session, now);
+            }
+            if (fullPersistDirty.getAndSet(false) || !store.supportsIncrementalPersist()) {
+                store.persistAll(sessions);
+                dirtyClientIds.clear();
+                removedClientIds.clear();
+                return;
+            }
+            for (String clientId : removedClientIds) {
+                store.deleteClient(clientId);
+            }
+            removedClientIds.clear();
+            for (String clientId : dirtyClientIds) {
+                Session s = sessions.get(clientId);
+                if (s != null) {
+                    store.persistClient(s);
+                } else {
+                    store.deleteClient(clientId);
+                }
+            }
+            dirtyClientIds.clear();
         } finally {
             synchronized (persistTaskLock) {
                 pendingPersistTask = null;
@@ -135,6 +206,9 @@ public final class SessionService {
     public synchronized void resetForTests() {
         flushPersistNow();
         sessions.clear();
+        dirtyClientIds.clear();
+        removedClientIds.clear();
+        fullPersistDirty.set(false);
         store.deleteIfExists();
     }
 
@@ -142,6 +216,13 @@ public final class SessionService {
         flushPersistNow();
         sessions.clear();
         sessions.putAll(store.loadAll());
+        long now = System.currentTimeMillis();
+        for (Session session : sessions.values()) {
+            pruneOfflineQueue(session, now);
+        }
+        dirtyClientIds.clear();
+        removedClientIds.clear();
+        fullPersistDirty.set(false);
     }
 
     public synchronized void flushPersistNow() {
@@ -168,6 +249,29 @@ public final class SessionService {
             persistExecutor.shutdownNow();
         } catch (RuntimeException e) {
             log.warn("session store 关闭刷盘失败", e);
+        }
+    }
+
+    private void pruneOfflineQueue(Session session, long nowMs) {
+        if (session == null) {
+            return;
+        }
+        if (offlineTtlMs > 0) {
+            while (true) {
+                QueuedMessage head = session.offlineQueue.peek();
+                if (head == null) {
+                    break;
+                }
+                if (nowMs - head.createdAtMs <= offlineTtlMs) {
+                    break;
+                }
+                session.offlineQueue.poll();
+            }
+        }
+        if (offlineMaxMessages > 0) {
+            while (session.offlineQueue.size() > offlineMaxMessages) {
+                session.offlineQueue.poll();
+            }
         }
     }
 }

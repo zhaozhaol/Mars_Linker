@@ -61,7 +61,7 @@ public final class DbSessionStore implements SessionStore {
             }
 
             try (PreparedStatement ps = c.prepareStatement(
-                    "SELECT client_id, topic, payload, retain_flag, qos FROM " + tableOffline
+                    "SELECT client_id, topic, payload, retain_flag, qos, created_at FROM " + tableOffline
                             + " ORDER BY client_id, msg_order");
                  ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -71,7 +71,8 @@ public final class DbSessionStore implements SessionStore {
                             rs.getString(2),
                             rs.getBytes(3),
                             rs.getInt(4) == 1,
-                            rs.getInt(5)
+                            rs.getInt(5),
+                            rs.getLong(6) > 0 ? rs.getLong(6) : System.currentTimeMillis()
                     ));
                 }
             }
@@ -114,7 +115,7 @@ public final class DbSessionStore implements SessionStore {
              PreparedStatement psSub = c.prepareStatement(
                      "INSERT INTO " + tableSubs + "(client_id, topic_filter, qos) VALUES (?, ?, ?)");
              PreparedStatement psOffline = c.prepareStatement(
-                     "INSERT INTO " + tableOffline + "(client_id, msg_order, topic, payload, retain_flag, qos) VALUES (?, ?, ?, ?, ?, ?)")) {
+                     "INSERT INTO " + tableOffline + "(client_id, msg_order, topic, payload, retain_flag, qos, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")) {
             for (SessionService.Session s : sessions.values()) {
                 if (s == null || s.clientId == null) {
                     continue;
@@ -137,6 +138,7 @@ public final class DbSessionStore implements SessionStore {
                     psOffline.setBytes(4, q.payload);
                     psOffline.setInt(5, q.retain ? 1 : 0);
                     psOffline.setInt(6, q.qos);
+                    psOffline.setLong(7, q.createdAtMs);
                     psOffline.addBatch();
                 }
             }
@@ -163,8 +165,13 @@ public final class DbSessionStore implements SessionStore {
                             + " PRIMARY KEY(client_id, topic_filter))"));
             st.execute(DbStoreNaming.createTableIfNotExists(tableOffline,
                     "(client_id VARCHAR(255) NOT NULL, msg_order INT NOT NULL, topic VARCHAR(1024) NOT NULL,"
-                            + " payload BLOB NOT NULL, retain_flag INT NOT NULL, qos INT NOT NULL,"
+                            + " payload BLOB NOT NULL, retain_flag INT NOT NULL, qos INT NOT NULL, created_at BIGINT NOT NULL,"
                             + " PRIMARY KEY(client_id, msg_order))"));
+            try {
+                st.execute("ALTER TABLE " + tableOffline + " ADD COLUMN created_at BIGINT NOT NULL DEFAULT 0");
+            } catch (SQLException ignored) {
+                // column may already exist
+            }
         } catch (SQLException e) {
             throw new IllegalStateException("初始化 DB Session 表失败", e);
         }

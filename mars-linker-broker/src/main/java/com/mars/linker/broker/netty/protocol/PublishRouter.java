@@ -114,7 +114,6 @@ public final class PublishRouter {
                                                             SessionService sessionService,
                                                             Map<String, ChannelId> clientToChannel,
                                                             Map<ChannelId, ChannelHandlerContext> channels) {
-        boolean changed = false;
         for (SessionService.Session session : sessionService.allSessions()) {
             if (session == null || session.subscriptionsQos.isEmpty()) {
                 continue;
@@ -135,13 +134,9 @@ public final class PublishRouter {
                 continue;
             }
             int eff = normalizeEffectiveQos(pubQos, granted);
-            byte[] copy = new byte[payload.length];
-            System.arraycopy(payload, 0, copy, 0, payload.length);
-            session.offlineQueue.add(new SessionService.QueuedMessage(topic, copy, retain, eff));
-            changed = true;
-        }
-        if (changed) {
-            sessionService.persist();
+            if (sessionService.enqueueOfflineMessage(session, topic, payload, retain, eff)) {
+                sessionService.persist(session.clientId);
+            }
         }
     }
 

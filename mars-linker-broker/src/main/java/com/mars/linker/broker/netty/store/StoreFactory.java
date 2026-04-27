@@ -21,6 +21,10 @@ public final class StoreFactory {
     }
 
     public static SessionStore createSessionStore(MarsLinkerMqttBrokerProperties p) {
+        if (p != null && !p.isStorageEnabled()) {
+            log.info("持久化已关闭，SessionStore 使用 no-op 内存模式");
+            return new NoopSessionStore();
+        }
         String mode = normalizeMode(p);
         log.info("SessionStore 模式: {}", mode);
         if ("redis".equals(mode)) {
@@ -44,6 +48,10 @@ public final class StoreFactory {
     }
 
     public static RetainStore createRetainStore(MarsLinkerMqttBrokerProperties p) {
+        if (p != null && !p.isStorageEnabled()) {
+            log.info("持久化已关闭，RetainStore 使用 no-op 内存模式");
+            return new NoopRetainStore();
+        }
         String mode = normalizeMode(p);
         log.info("RetainStore 模式: {}", mode);
         if ("redis".equals(mode)) {
@@ -76,7 +84,7 @@ public final class StoreFactory {
     public static void migrateIfNeeded(MarsLinkerMqttBrokerProperties p,
                                 SessionStore targetSessionStore,
                                 RetainStore targetRetainStore) {
-        if (p == null || !p.isStorageMigrateOnStartup()) {
+        if (p == null || !p.isStorageEnabled() || !p.isStorageMigrateOnStartup()) {
             return;
         }
         String mode = normalizeMode(p);

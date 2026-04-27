@@ -87,6 +87,11 @@ public final class HttpAclProvider implements AclProvider {
         return delegate.get().allowsPublish(topic);
     }
 
+    @Override
+    public void close() {
+        scheduler.shutdownNow();
+    }
+
     private void safeRefreshOnce() {
         try {
             AclRuleSet rules = fetchRuleSet();

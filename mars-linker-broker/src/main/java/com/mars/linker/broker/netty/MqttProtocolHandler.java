@@ -547,7 +547,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         if (cleanSession) {
             persistedSession.subscriptionsQos.clear();
             persistedSession.offlineQueue.clear();
-            SESSION_SERVICE.persist();
+            SESSION_SERVICE.persist(clientId);
         } else {
             // 恢复订阅（把 session 里存的订阅重新挂回当前 channel）
             for (Map.Entry<String, Integer> e : persistedSession.subscriptionsQos.entrySet()) {
@@ -612,7 +612,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
             if (drained > 0) {
                 log.info("Session 离线消息已补发 clientId={} drained={} channelId={}",
                         clientId, drained, ctx.channel().id().asShortText());
-                SESSION_SERVICE.persist();
+                SESSION_SERVICE.persist(clientId);
             }
         }
     }
@@ -1183,7 +1183,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         if (clientId != null) {
             SessionService.Session persistedSession = SESSION_SERVICE.getOrCreate(clientId);
             persistedSession.subscriptionsQos.put(topicFilter, grantedQos);
-            SESSION_SERVICE.persist();
+            SESSION_SERVICE.persist(clientId);
         }
     }
 
@@ -1215,7 +1215,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                 SessionService.Session s = SESSION_SERVICE.get(clientId);
                 if (s != null) {
                     s.subscriptionsQos.remove(topicFilter);
-                    SESSION_SERVICE.persist();
+                    SESSION_SERVICE.persist(clientId);
                 }
             }
         }
@@ -1243,7 +1243,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
             SessionService.Session s = SESSION_SERVICE.get(clientId);
             if (s != null) {
                 s.subscriptionsQos.clear();
-                SESSION_SERVICE.persist();
+                SESSION_SERVICE.persist(clientId);
             }
         }
         filters.clear();

@@ -83,14 +83,15 @@ public final class FileSessionStore implements SessionStore {
                             continue;
                         }
                         boolean retain = "1".equals(p[4]);
-                        byte[] payload = Base64.getDecoder().decode(p[5]);
+                        long createdAtMs = p.length >= 7 ? Long.parseLong(p[5]) : System.currentTimeMillis();
+                        byte[] payload = Base64.getDecoder().decode(p.length >= 7 ? p[6] : p[5]);
                         if (payload.length > MAX_PERSISTED_MESSAGE_BYTES) {
                             continue;
                         }
                         if (session.offlineQueue.size() >= MAX_OFFLINE_QUEUE_PER_SESSION) {
                             continue;
                         }
-                        session.offlineQueue.add(new SessionService.QueuedMessage(topic, payload, retain, qos));
+                        session.offlineQueue.add(new SessionService.QueuedMessage(topic, payload, retain, qos, createdAtMs));
                     } catch (RuntimeException ignored) {
                         // skip malformed message line
                     }
@@ -124,6 +125,7 @@ public final class FileSessionStore implements SessionStore {
                         continue;
                     }
                     lines.add("MSG\t" + s.clientId + "\t" + q.topic + "\t" + q.qos + "\t" + (q.retain ? "1" : "0")
+                            + "\t" + q.createdAtMs
                             + "\t" + Base64.getEncoder().encodeToString(q.payload));
                 }
             }

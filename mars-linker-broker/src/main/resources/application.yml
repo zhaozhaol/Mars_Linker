@@ -25,8 +25,9 @@ mars:
       max-packet-bytes: 262144
       so-backlog: 1024
       # --- 存储模式配置 ---
-      # storage-mode: file              # file(默认) / redis / db
-      # storage-migrate-on-startup: false # 启动时从 file 迁移到目标存储（仅 mode!=file 时生效）
+      storage-enabled: true              # 持久化总开关：false 时仅内存运行
+      storage-mode: file                 # file(默认) / redis / db（仅 storage-enabled=true 生效）
+      storage-migrate-on-startup: false  # 启动时从 file 迁移到目标存储（仅 mode!=file 且 storage-enabled=true）
       # storage-redis-address: localhost:6379  # Redis 地址（mode=redis 时必填）
       # storage-redis-password:               # Redis 密码（可选）
       # storage-redis-database: 0             # Redis 数据库编号
@@ -37,6 +38,10 @@ mars:
       # storage-db-password:                  # DB 密码
       # storage-db-schema: public             # DB schema
       # storage-db-table-prefix: ml_          # DB 表名前缀
+      session-offline-max-messages: 5000      # 每个 client 离线消息上限（<=0 不限）
+      session-offline-ttl-ms: 604800000       # 离线消息保留时长（毫秒，7天，<=0 不过期）
+      retain-max-messages: 200000             # retain 总量上限（<=0 不限）
+      retain-ttl-ms: 2592000000               # retain 保留时长（毫秒，30天，<=0 不过期）
       acl-enabled: false
       acl-default-deny: false
       acl-allow-subscribe-prefixes: []
@@ -47,4 +52,4 @@ mars:
 logging:
   level:
     root: INFO
-    com.nexus.mqtt.broker: INFO
+    com.mars.linker.broker: INFO

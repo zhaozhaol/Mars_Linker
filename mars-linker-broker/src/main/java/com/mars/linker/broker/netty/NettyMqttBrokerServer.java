@@ -25,12 +25,13 @@ import com.mars.linker.broker.netty.store.RetainStore;
 import com.mars.linker.broker.netty.store.SessionService;
 import com.mars.linker.broker.netty.store.SessionStore;
 import com.mars.linker.broker.netty.store.StoreFactory;
+import com.mars.linker.broker.netty.store.BoundedRetainStore;
 
 /**
  * Netty TCP MQTT 监听入口（Spring {@link SmartLifecycle}，应用启动时 bind，停止时优雅关闭）。
  * <p>
  * 管道见 {@link MqttTcpChannelInitializer}：{@link MqttFrameDecoder} → {@link MqttProtocolHandler}。
- * 开关：{@code MarsLinker.mqtt.broker.netty-enabled=true}；端口与线程数见 {@link MarsLinkerMqttBrokerProperties}。
+ * 开关：{@code mars.linker.broker.netty-enabled=true}；端口与线程数见 {@link MarsLinkerMqttBrokerProperties}。
  * </p>
  * <p>
  * <b>测试备注</b>：本类以集成方式验证为宜（本地启动 Spring Boot，对 {@code tcpPort} 发真实 CONNECT）；
@@ -38,13 +39,15 @@ import com.mars.linker.broker.netty.store.StoreFactory;
  * </p>
  */
 @Component
-@ConditionalOnProperty(name = "MarsLinker.mqtt.broker.netty-enabled", havingValue = "true")
+@ConditionalOnProperty(name = "mars.linker.broker.netty-enabled", havingValue = "true")
 public class NettyMqttBrokerServer implements SmartLifecycle {
 
     private static final Logger log = LoggerFactory.getLogger(NettyMqttBrokerServer.class);
 
     private final MarsLinkerMqttBrokerProperties properties;
     private final MqttProtocolHandler mqttProtocolHandler;
+    private final com.mars.linker.broker.netty.auth.AuthProvider authProvider;
+    private final com.mars.linker.broker.netty.acl.AclProvider aclProvider;
     private final SessionStore sessionStore;
     private final RetainStore retainStore;
 
@@ -57,17 +60,28 @@ public class NettyMqttBrokerServer implements SmartLifecycle {
     public NettyMqttBrokerServer(MarsLinkerMqttBrokerProperties properties) {
         this.properties = properties;
         this.sessionStore = StoreFactory.createSessionStore(properties);
-        this.retainStore = StoreFactory.createRetainStore(properties);
-        StoreFactory.migrateIfNeeded(properties, this.sessionStore, this.retainStore);
+        RetainStore baseRetainStore = StoreFactory.createRetainStore(properties);
+        StoreFactory.migrateIfNeeded(properties, this.sessionStore, baseRetainStore);
+        this.retainStore = new BoundedRetainStore(
+                baseRetainStore,
+                properties.getRetainMaxMessages(),
+                properties.getRetainTtlMs()
+        );
+        this.authProvider = AuthProviderFactory.create(properties);
+        this.aclProvider = AclProviderFactory.create(properties);
         this.mqttProtocolHandler = new MqttProtocolHandler(
-                AuthProviderFactory.create(properties),
-                AclProviderFactory.create(properties),
+                this.authProvider,
+                this.aclProvider,
                 properties.isQos1RetransmitEnabled(),
                 properties.getQos1RetransmitIntervalMs(),
                 properties.getQos1RetransmitMaxAttempts(),
                 properties.getMaxConnections(),
                 properties.getInboundQos2PendingMax(),
-                SessionService.create(this.sessionStore),
+                SessionService.create(
+                        this.sessionStore,
+                        properties.getSessionOfflineMaxMessages(),
+                        properties.getSessionOfflineTtlMs()
+                ),
                 this.retainStore
         );
         this.sslContext = buildServerSslContextIfNeeded(properties);
@@ -125,6 +139,10 @@ public class NettyMqttBrokerServer implements SmartLifecycle {
                 workerGroup.shutdownGracefully(0, 5, TimeUnit.SECONDS).syncUninterruptibly();
                 workerGroup = null;
             }
+            closeQuietly(retainStore, "retainStore");
+            closeQuietly(sessionStore, "sessionStore");
+            closeQuietly(aclProvider, "aclProvider");
+            closeQuietly(authProvider, "authProvider");
         }
         log.info("Netty MQTT TCP stopped");
     }
@@ -168,5 +186,16 @@ public class NettyMqttBrokerServer implements SmartLifecycle {
 
     private static boolean isBlank(String s) {
         return s == null || s.trim().isEmpty();
+    }
+
+    private static void closeQuietly(AutoCloseable resource, String name) {
+        if (resource == null) {
+            return;
+        }
+        try {
+            resource.close();
+        } catch (Exception e) {
+            log.warn("关闭资源 {} 失败: {}", name, e.toString());
+        }
     }
 }
