@@ -48,6 +48,10 @@ mars:
       acl-allow-publish-prefixes: []
       acl-deny-subscribe-prefixes: []
       acl-deny-publish-prefixes: []
+    ui:
+      enabled: true
+      collection-buffer-size: 1000
+      monitor-refresh-ms: 5000
 
 logging:
   level:
