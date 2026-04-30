@@ -52,6 +52,22 @@ mars:
       enabled: true
       collection-buffer-size: 1000
       monitor-refresh-ms: 5000
+      connection-enabled: true
+      message-enabled: true
+      subscription-enabled: true
+      system-enabled: true
+      alert-evaluation-enabled: true
+      connection-sample-rate: 1.0
+      message-sample-rate: 1.0
+      subscription-sample-rate: 1.0
+      system-sample-rate: 1.0
+      aggregation-window-ms: 1000
+      max-history-memory-mb: 64
+      monitoring-thread-pool-size: 2
+      push-thread-pool-size: 2
+      max-api-queries-per-second: 30
+      max-push-connections: 50
+      persist-mode: memory
 
 logging:
   level:

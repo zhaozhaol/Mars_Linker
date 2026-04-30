@@ -8,7 +8,7 @@ import io.netty.util.concurrent.ScheduledFuture;
 /**
  * 聚合连接级会话属性，避免在协议处理器中散落 AttributeKey 读写。
  */
-final class ClientSessionContext {
+public final class ClientSessionContext {
     private static final AttributeKey<Boolean> CONNECTED = AttributeKey.valueOf("mqtt_connected");
     private static final AttributeKey<String> CLIENT_ID = AttributeKey.valueOf("mqtt_client_id");
     private static final AttributeKey<Integer> PROTOCOL_LEVEL = AttributeKey.valueOf("mqtt_protocol_level");
@@ -29,35 +29,35 @@ final class ClientSessionContext {
         this.channel = channel;
     }
 
-    static ClientSessionContext of(ChannelHandlerContext ctx) {
+    public static ClientSessionContext of(ChannelHandlerContext ctx) {
         return new ClientSessionContext(ctx.channel());
     }
 
-    Boolean connected() { return channel.attr(CONNECTED).get(); }
+    public Boolean connected() { return channel.attr(CONNECTED).get(); }
     void connected(Boolean value) { channel.attr(CONNECTED).set(value); }
 
-    String clientId() { return channel.attr(CLIENT_ID).get(); }
+    public String clientId() { return channel.attr(CLIENT_ID).get(); }
     void clientId(String value) { channel.attr(CLIENT_ID).set(value); }
 
-    Integer protocolLevel() { return channel.attr(PROTOCOL_LEVEL).get(); }
+    public Integer protocolLevel() { return channel.attr(PROTOCOL_LEVEL).get(); }
     void protocolLevel(Integer value) { channel.attr(PROTOCOL_LEVEL).set(value); }
 
-    Boolean cleanSession() { return channel.attr(CLEAN_SESSION).get(); }
+    public Boolean cleanSession() { return channel.attr(CLEAN_SESSION).get(); }
     void cleanSession(Boolean value) { channel.attr(CLEAN_SESSION).set(value); }
 
-    Boolean disconnectReceived() { return channel.attr(DISCONNECT_RECEIVED).get(); }
+    public Boolean disconnectReceived() { return channel.attr(DISCONNECT_RECEIVED).get(); }
     void disconnectReceived(Boolean value) { channel.attr(DISCONNECT_RECEIVED).set(value); }
 
-    String closeReason() { return channel.attr(CLOSE_REASON).get(); }
+    public String closeReason() { return channel.attr(CLOSE_REASON).get(); }
     void closeReason(String value) { channel.attr(CLOSE_REASON).set(value); }
 
-    Integer keepAliveSeconds() { return channel.attr(KEEP_ALIVE_SECONDS).get(); }
+    public Integer keepAliveSeconds() { return channel.attr(KEEP_ALIVE_SECONDS).get(); }
     void keepAliveSeconds(Integer value) { channel.attr(KEEP_ALIVE_SECONDS).set(value); }
 
-    Long lastPacketAtMs() { return channel.attr(LAST_PACKET_AT_MS).get(); }
+    public Long lastPacketAtMs() { return channel.attr(LAST_PACKET_AT_MS).get(); }
     void lastPacketAtMs(Long value) { channel.attr(LAST_PACKET_AT_MS).set(value); }
 
-    ScheduledFuture<?> keepAliveTask() { return channel.attr(KEEPALIVE_TASK).get(); }
+    public ScheduledFuture<?> keepAliveTask() { return channel.attr(KEEPALIVE_TASK).get(); }
     void keepAliveTask(ScheduledFuture<?> value) { channel.attr(KEEPALIVE_TASK).set(value); }
 
     String willTopic() { return channel.attr(WILL_TOPIC).get(); }

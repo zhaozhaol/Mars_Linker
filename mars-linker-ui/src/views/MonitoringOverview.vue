@@ -10,6 +10,26 @@
       <span>数据未更新</span>
     </div>
 
+    <div class="push-status-bar">
+      <span class="push-indicator" :class="{ connected: pushStore.connected }">
+        <span class="push-dot"></span>
+        {{ pushStore.connected ? '已连接' : '未连接' }}
+      </span>
+      <span class="push-mode">推送模式: {{ pushStore.mode === 'sse' ? 'SSE' : '轮询' }}</span>
+      <span v-if="pushStore.reconnectCount > 0" class="reconnect-info">重连 {{ pushStore.reconnectCount }} 次</span>
+    </div>
+
+    <div v-if="healthStatus" class="health-row">
+      <span class="health-label">健康状态</span>
+      <HealthBadge :status="healthStatus.status" />
+      <div class="health-components">
+        <div v-for="comp in healthStatus.components" :key="comp.name" class="comp-item">
+          <span class="comp-name">{{ comp.name }}</span>
+          <HealthBadge :status="comp.status" />
+        </div>
+      </div>
+    </div>
+
     <div class="stats-row">
       <div class="stat-card accent-blue">
         <div class="stat-icon-wrap blue-icon">
@@ -62,6 +82,33 @@
       <div class="trend-card">
         <TrendChart title="拒绝/ACL" :points="monitoringStore.rejectedTrend" color="red" />
       </div>
+    </div>
+
+    <div class="detail-panels">
+      <ConnectionPanel
+        :data="connectionData"
+        :loading="connectionLoading"
+        :error="connectionError"
+        @retry="fetchConnection"
+      />
+      <MessagePanel
+        :data="messageData"
+        :loading="messageLoading"
+        :error="messageError"
+        @retry="fetchMessage"
+      />
+      <SubscriptionPanel
+        :data="subscriptionData"
+        :loading="subscriptionLoading"
+        :error="subscriptionError"
+        @retry="fetchSubscription"
+      />
+      <SystemPanel
+        :data="systemData"
+        :loading="systemLoading"
+        :error="systemError"
+        @retry="fetchSystem"
+      />
     </div>
 
     <div class="panels-grid">
@@ -156,25 +203,115 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { useMonitoringStore } from '../stores/monitoring'
+import { usePushStore } from '../stores/push'
+import { usePushFallback } from '../composables/usePushFallback'
 import { usePolling } from '../composables/usePolling'
 import { formatBoolean, formatMetricValue, formatTimestamp } from '../utils/formatter'
+import { getConnectionMetrics, getMessageMetrics, getSubscriptionMetrics, getSystemMetrics, getHealthStatus } from '../api/monitoring'
+import type { ConnectionMetrics, MessageMetrics, SubscriptionMetrics, SystemMetrics, HealthStatus } from '../types/monitoring'
+import type { PushMessage } from '../types/push'
 import TrendChart from '../components/monitoring/TrendChart.vue'
+import ConnectionPanel from '../components/monitoring/ConnectionPanel.vue'
+import MessagePanel from '../components/monitoring/MessagePanel.vue'
+import SubscriptionPanel from '../components/monitoring/SubscriptionPanel.vue'
+import SystemPanel from '../components/monitoring/SystemPanel.vue'
+import HealthBadge from '../components/monitoring/HealthBadge.vue'
 
 const monitoringStore = useMonitoringStore()
+const pushStore = usePushStore()
 const refreshInterval = ref(monitoringStore.runtimeConfig?.monitorRefreshMs ?? 5000)
+
+const connectionData = ref<ConnectionMetrics | null>(null)
+const connectionLoading = ref(false)
+const connectionError = ref<string | null>(null)
+
+const messageData = ref<MessageMetrics | null>(null)
+const messageLoading = ref(false)
+const messageError = ref<string | null>(null)
+
+const subscriptionData = ref<SubscriptionMetrics | null>(null)
+const subscriptionLoading = ref(false)
+const subscriptionError = ref<string | null>(null)
+
+const systemData = ref<SystemMetrics | null>(null)
+const systemLoading = ref(false)
+const systemError = ref<string | null>(null)
+
+const healthStatus = ref<HealthStatus | null>(null)
+
+const fetchConnection = async () => {
+  connectionLoading.value = true; connectionError.value = null
+  try { connectionData.value = await getConnectionMetrics() } catch { connectionError.value = '连接指标加载失败' } finally { connectionLoading.value = false }
+}
+const fetchMessage = async () => {
+  messageLoading.value = true; messageError.value = null
+  try { messageData.value = await getMessageMetrics() } catch { messageError.value = '消息指标加载失败' } finally { messageLoading.value = false }
+}
+const fetchSubscription = async () => {
+  subscriptionLoading.value = true; subscriptionError.value = null
+  try { subscriptionData.value = await getSubscriptionMetrics() } catch { subscriptionError.value = '订阅指标加载失败' } finally { subscriptionLoading.value = false }
+}
+const fetchSystem = async () => {
+  systemLoading.value = true; systemError.value = null
+  try { systemData.value = await getSystemMetrics() } catch { systemError.value = '系统指标加载失败' } finally { systemLoading.value = false }
+}
+const fetchHealth = async () => {
+  try { healthStatus.value = await getHealthStatus() } catch { /* ignore */ }
+}
 
 const { start, stop, resume } = usePolling({
   interval: refreshInterval,
   callback: () => monitoringStore.fetchOverview()
 })
 
+const { connect: connectPush, disconnect: disconnectPush } = usePushFallback(['connection', 'message', 'subscription', 'system'])
+
+const handlePushMessage = (msg: PushMessage) => {
+  pushStore.setConnected(true)
+  if (msg.type === 'metrics_update') {
+    switch (msg.category) {
+      case 'connection':
+        connectionData.value = msg.payload
+        break
+      case 'message':
+        messageData.value = msg.payload
+        break
+      case 'subscription':
+        subscriptionData.value = msg.payload
+        break
+      case 'system':
+        systemData.value = msg.payload
+        break
+      case 'all':
+        if (msg.payload) {
+          connectionData.value = msg.payload.metrics ?? connectionData.value
+          messageData.value = msg.payload.metrics ?? messageData.value
+        }
+        break
+    }
+  } else if (msg.type === 'alert_event') {
+    monitoringStore.fetchOverview()
+  }
+}
+
 const manualRefresh = async () => {
   await monitoringStore.fetchOverview()
   if (!monitoringStore.isPaused) resume()
 }
 
-onMounted(() => start())
-onUnmounted(() => stop())
+onMounted(() => {
+  start()
+  connectPush(handlePushMessage)
+  fetchConnection()
+  fetchMessage()
+  fetchSubscription()
+  fetchSystem()
+  fetchHealth()
+})
+onUnmounted(() => {
+  stop()
+  disconnectPush()
+})
 
 const hasAlert = computed(() => {
   const m = monitoringStore.metrics
@@ -215,6 +352,37 @@ const allMetrics = computed(() => {
 .alert-banner.warning { background: rgba(245,158,11,0.1); color: #f59e0b; border: 1px solid rgba(245,158,11,0.15); }
 .alert-banner.error { background: rgba(239,68,68,0.08); color: #ef4444; border: 1px solid rgba(239,68,68,0.12); }
 
+.push-status-bar {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 16px; font-size: 12px;
+}
+.push-indicator {
+  display: flex; align-items: center; gap: 6px;
+  color: rgba(255,255,255,0.4);
+}
+.push-indicator.connected { color: #10b981; }
+.push-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: rgba(255,255,255,0.3);
+}
+.push-indicator.connected .push-dot {
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16,185,129,0.4);
+}
+.push-mode { color: rgba(255,255,255,0.3); }
+.reconnect-info { color: #f59e0b; font-size: 11px; }
+
+.health-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px; margin-bottom: 16px;
+  background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px; flex-wrap: wrap;
+}
+.health-label { font-size: 13px; color: rgba(255,255,255,0.5); font-weight: 500; }
+.health-components { display: flex; gap: 8px; flex-wrap: wrap; }
+.comp-item { display: flex; align-items: center; gap: 6px; }
+.comp-name { font-size: 12px; color: rgba(255,255,255,0.6); }
+
 .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
 
 .trends-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
@@ -225,6 +393,11 @@ const allMetrics = computed(() => {
   transition: border-color 0.2s;
 }
 .trend-card:hover { border-color: rgba(255,255,255,0.1); }
+
+.detail-panels {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px;
+}
+
 .stat-card {
   background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06);
   border-radius: 12px; padding: 16px; display: flex; align-items: center; gap: 14px;

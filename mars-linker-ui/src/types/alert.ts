@@ -22,3 +22,19 @@ export interface AlertEvent {
   resolvedAt: number
   active: boolean
 }
+
+export type AlertStatus = 'firing' | 'resolved' | 'silenced'
+
+export interface SilenceRequest {
+  durationMs: number
+}
+
+export interface ExtendedAlertRule extends AlertRule {
+  severity?: 'critical' | 'warning' | 'info'
+  durationMs?: number
+}
+
+export interface ExtendedAlertEvent extends AlertEvent {
+  status?: AlertStatus
+  silencedUntil?: number
+}

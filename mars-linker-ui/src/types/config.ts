@@ -11,4 +11,6 @@ export interface BrokerConfig {
   retainTtlMs: number
 }
 
-export type RuntimeConfigUpdateRequest = Partial<Pick<RuntimeConfig, 'collectMode' | 'monitorRefreshMs'>>
+export type RuntimeConfigUpdateRequest = Partial<Pick<RuntimeConfig, 'collectMode' | 'monitorRefreshMs'>> & {
+  persist?: boolean
+}

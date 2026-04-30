@@ -5,8 +5,9 @@ import com.mars.linker.broker.ui.collection.CollectedEvent;
 import com.mars.linker.broker.ui.collection.DataCollectionService;
 import com.mars.linker.broker.ui.config.MarsLinkerUiProperties;
 import com.mars.linker.broker.ui.config.RuntimeConfigService;
-import com.mars.linker.broker.ui.monitoring.MonitoringService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.LinkedHashMap;
@@ -21,27 +22,19 @@ import java.util.Map;
 @ConditionalOnProperty(prefix = "mars.linker.ui", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class UiManagementController {
 
-    private final MonitoringService monitoringService;
     private final RuntimeConfigService runtimeConfigService;
     private final DataCollectionService dataCollectionService;
     private final MarsLinkerMqttBrokerProperties brokerProperties;
     private final MarsLinkerUiProperties uiProperties;
 
-    public UiManagementController(MonitoringService monitoringService,
-                                  RuntimeConfigService runtimeConfigService,
+    public UiManagementController(RuntimeConfigService runtimeConfigService,
                                   DataCollectionService dataCollectionService,
                                   MarsLinkerMqttBrokerProperties brokerProperties,
                                   MarsLinkerUiProperties uiProperties) {
-        this.monitoringService = monitoringService;
         this.runtimeConfigService = runtimeConfigService;
         this.dataCollectionService = dataCollectionService;
         this.brokerProperties = brokerProperties;
         this.uiProperties = uiProperties;
-    }
-
-    @GetMapping("/monitoring/overview")
-    public Map<String, Object> monitoringOverview() {
-        return monitoringService.overview();
     }
 
     @GetMapping("/config/broker")
@@ -64,8 +57,13 @@ public class UiManagementController {
     }
 
     @PutMapping("/config/runtime")
-    public Map<String, Object> updateRuntimeConfig(@RequestBody(required = false) Map<String, Object> updates) {
-        return runtimeConfigService.update(updates);
+    public ResponseEntity<?> updateRuntimeConfig(@RequestBody(required = false) Map<String, Object> updates) {
+        try {
+            return ResponseEntity.ok(runtimeConfigService.update(updates));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("error", e.getMessage()));
+        }
     }
 
     @GetMapping("/collection/events")

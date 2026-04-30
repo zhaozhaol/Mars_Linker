@@ -1,5 +1,6 @@
 package com.mars.linker.broker.ui.alert;
 
+import com.mars.linker.broker.ui.monitoring.model.PagedResult;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -12,6 +13,7 @@ public class AlertRuleRepository {
 
     private final Map<String, AlertRule> rules = new ConcurrentHashMap<>();
     private final List<AlertEvent> events = new CopyOnWriteArrayList<>();
+    private final Map<String, Long> silencedUntil = new ConcurrentHashMap<>();
     private final AtomicLong ruleIdSeq = new AtomicLong(1);
     private final AtomicLong eventIdSeq = new AtomicLong(1);
     private static final int MAX_EVENTS = 500;
@@ -25,6 +27,7 @@ public class AlertRuleRepository {
     }
 
     public AlertRule createRule(AlertRule rule) {
+        validateRule(rule);
         String id = "rule-" + ruleIdSeq.getAndIncrement();
         rule.setId(id);
         long now = System.currentTimeMillis();
@@ -35,6 +38,7 @@ public class AlertRuleRepository {
     }
 
     public Optional<AlertRule> updateRule(String id, AlertRule update) {
+        validateRule(update);
         return Optional.ofNullable(rules.computeIfPresent(id, (k, existing) -> {
             existing.setName(update.getName());
             existing.setMetric(update.getMetric());
@@ -48,7 +52,25 @@ public class AlertRuleRepository {
     }
 
     public boolean deleteRule(String id) {
+        silencedUntil.remove(id);
         return rules.remove(id) != null;
+    }
+
+    public void silenceRule(String ruleId, long untilMs) {
+        if (!rules.containsKey(ruleId)) {
+            throw new IllegalArgumentException("Rule not found: " + ruleId);
+        }
+        silencedUntil.put(ruleId, untilMs);
+    }
+
+    public boolean isSilenced(String ruleId) {
+        Long until = silencedUntil.get(ruleId);
+        if (until == null) return false;
+        if (System.currentTimeMillis() > until) {
+            silencedUntil.remove(ruleId);
+            return false;
+        }
+        return true;
     }
 
     public List<AlertEvent> listEvents(boolean activeOnly) {
@@ -60,6 +82,29 @@ public class AlertRuleRepository {
             return result;
         }
         return new ArrayList<>(events);
+    }
+
+    public PagedResult<AlertEvent> listHistory(Long start, Long end, int page, int size) {
+        int actualPage = Math.max(1, page);
+        int actualSize = Math.min(500, Math.max(1, size));
+
+        List<AlertEvent> filtered = new ArrayList<>();
+        for (AlertEvent e : events) {
+            if (start != null && e.getTriggeredAt() < start) continue;
+            if (end != null && e.getTriggeredAt() > end) continue;
+            filtered.add(e);
+        }
+
+        long totalCount = filtered.size();
+        int fromIndex = (actualPage - 1) * actualSize;
+        int toIndex = Math.min(fromIndex + actualSize, filtered.size());
+        List<AlertEvent> pageItems;
+        if (fromIndex >= filtered.size()) {
+            pageItems = new ArrayList<>();
+        } else {
+            pageItems = filtered.subList(fromIndex, toIndex);
+        }
+        return new PagedResult<>(pageItems, totalCount, actualPage, actualSize);
     }
 
     public AlertEvent recordTrigger(AlertRule rule, double actualValue) {
@@ -84,6 +129,18 @@ public class AlertRuleRepository {
                 e.setActive(false);
                 e.setResolvedAt(System.currentTimeMillis());
             }
+        }
+    }
+
+    public void validateRule(AlertRule rule) {
+        if (rule.getName() == null || rule.getName().trim().isEmpty()) {
+            throw new IllegalArgumentException("Rule name must not be empty");
+        }
+        if (rule.getMetric() == null || rule.getMetric().trim().isEmpty()) {
+            throw new IllegalArgumentException("Rule metric must not be empty");
+        }
+        if (rule.getOperator() == null || !Arrays.asList(">", ">=", "<", "<=", "==").contains(rule.getOperator())) {
+            throw new IllegalArgumentException("Invalid operator: " + rule.getOperator());
         }
     }
 

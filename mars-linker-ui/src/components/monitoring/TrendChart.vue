@@ -62,7 +62,7 @@ const formatNumber = (n: number) => {
   return String(n)
 }
 
-const { linePath, areaPath, lastPoint } = computed(() => {
+const chartData = computed(() => {
   const pts = props.points
   if (pts.length < 2) return { linePath: '', areaPath: '', lastPoint: null }
 
@@ -92,12 +92,16 @@ const { linePath, areaPath, lastPoint } = computed(() => {
   const area = line + ` L${last.x},${h} L${coords[0].x},${h} Z`
 
   return { linePath: line, areaPath: area, lastPoint: last }
-}).value
+})
+
+const linePath = computed(() => chartData.value.linePath)
+const areaPath = computed(() => chartData.value.areaPath)
+const lastPoint = computed(() => chartData.value.lastPoint)
 </script>
 
 <style scoped>
-.trend-chart {}
-.chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.trend-chart { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-shrink: 0; }
 .chart-title { font-size: 12px; color: rgba(255,255,255,0.45); font-weight: 500; }
 .chart-current { font-size: 16px; font-weight: 700; font-family: 'SF Mono','Fira Code',monospace; }
 .val-blue { color: #4d6dff; }
@@ -105,7 +109,7 @@ const { linePath, areaPath, lastPoint } = computed(() => {
 .val-purple { color: #7c5cfc; }
 .val-red { color: #ef4444; }
 
-.chart-body { position: relative; }
+.chart-body { position: relative; flex: 1; min-height: 0; }
 .chart-svg { width: 100%; height: 100%; display: block; }
 .no-data { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 12px; color: rgba(255,255,255,0.2); }
 </style>

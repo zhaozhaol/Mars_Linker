@@ -11,6 +11,10 @@ public class AlertRule {
     private boolean enabled;
     private long createdAt;
     private long updatedAt;
+    /** 严重级别：critical / warning / info。 */
+    private String severity = "warning";
+    /** 持续时间（毫秒）。 */
+    private long durationMs;
 
     public AlertRule() {
         this.createdAt = System.currentTimeMillis();
@@ -36,4 +40,8 @@ public class AlertRule {
     public void setCreatedAt(long createdAt) { this.createdAt = createdAt; }
     public long getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(long updatedAt) { this.updatedAt = updatedAt; }
+    public String getSeverity() { return severity; }
+    public void setSeverity(String severity) { this.severity = severity; }
+    public long getDurationMs() { return durationMs; }
+    public void setDurationMs(long durationMs) { this.durationMs = durationMs; }
 }

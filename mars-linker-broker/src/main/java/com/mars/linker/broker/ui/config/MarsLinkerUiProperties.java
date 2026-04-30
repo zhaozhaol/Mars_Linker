@@ -25,6 +25,46 @@ public class MarsLinkerUiProperties {
      */
     private long monitorRefreshMs = 5_000L;
 
+    /** 连接指标采集开关。 */
+    private boolean connectionEnabled = true;
+    /** 消息指标采集开关。 */
+    private boolean messageEnabled = true;
+    /** 订阅指标采集开关。 */
+    private boolean subscriptionEnabled = true;
+    /** 系统指标采集开关。 */
+    private boolean systemEnabled = true;
+    /** 告警评估开关。 */
+    private boolean alertEvaluationEnabled = true;
+
+    /** 连接指标采样率（0.0-1.0）。 */
+    private double connectionSampleRate = 1.0;
+    /** 消息指标采样率（0.0-1.0）。 */
+    private double messageSampleRate = 1.0;
+    /** 订阅指标采样率（0.0-1.0）。 */
+    private double subscriptionSampleRate = 1.0;
+    /** 系统指标采样率（0.0-1.0）。 */
+    private double systemSampleRate = 1.0;
+
+    /** 聚合窗口（毫秒）。 */
+    private long aggregationWindowMs = 1_000L;
+
+    /** 历史数据最大内存（MB）。 */
+    private int maxHistoryMemoryMB = 64;
+    /** 监控采集线程池大小。 */
+    private int monitoringThreadPoolSize = 2;
+    /** 推送线程池大小。 */
+    private int pushThreadPoolSize = 2;
+    /** API 最大查询速率（次/秒）。 */
+    private int maxApiQueriesPerSecond = 30;
+    /** 最大推送连接数。 */
+    private int maxPushConnections = 50;
+
+    /** 持久化模式：memory / file / db。 */
+    private String persistMode = "memory";
+
+    /** 是否启用 API 鉴权（默认关闭，需要 JWT token）。 */
+    private boolean authEnabled = false;
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -48,4 +88,44 @@ public class MarsLinkerUiProperties {
     public void setMonitorRefreshMs(long monitorRefreshMs) {
         this.monitorRefreshMs = monitorRefreshMs;
     }
+
+    public boolean isConnectionEnabled() { return connectionEnabled; }
+    public void setConnectionEnabled(boolean connectionEnabled) { this.connectionEnabled = connectionEnabled; }
+    public boolean isMessageEnabled() { return messageEnabled; }
+    public void setMessageEnabled(boolean messageEnabled) { this.messageEnabled = messageEnabled; }
+    public boolean isSubscriptionEnabled() { return subscriptionEnabled; }
+    public void setSubscriptionEnabled(boolean subscriptionEnabled) { this.subscriptionEnabled = subscriptionEnabled; }
+    public boolean isSystemEnabled() { return systemEnabled; }
+    public void setSystemEnabled(boolean systemEnabled) { this.systemEnabled = systemEnabled; }
+    public boolean isAlertEvaluationEnabled() { return alertEvaluationEnabled; }
+    public void setAlertEvaluationEnabled(boolean alertEvaluationEnabled) { this.alertEvaluationEnabled = alertEvaluationEnabled; }
+
+    public double getConnectionSampleRate() { return connectionSampleRate; }
+    public void setConnectionSampleRate(double connectionSampleRate) { this.connectionSampleRate = connectionSampleRate; }
+    public double getMessageSampleRate() { return messageSampleRate; }
+    public void setMessageSampleRate(double messageSampleRate) { this.messageSampleRate = messageSampleRate; }
+    public double getSubscriptionSampleRate() { return subscriptionSampleRate; }
+    public void setSubscriptionSampleRate(double subscriptionSampleRate) { this.subscriptionSampleRate = subscriptionSampleRate; }
+    public double getSystemSampleRate() { return systemSampleRate; }
+    public void setSystemSampleRate(double systemSampleRate) { this.systemSampleRate = systemSampleRate; }
+
+    public long getAggregationWindowMs() { return aggregationWindowMs; }
+    public void setAggregationWindowMs(long aggregationWindowMs) { this.aggregationWindowMs = aggregationWindowMs; }
+
+    public int getMaxHistoryMemoryMB() { return maxHistoryMemoryMB; }
+    public void setMaxHistoryMemoryMB(int maxHistoryMemoryMB) { this.maxHistoryMemoryMB = maxHistoryMemoryMB; }
+    public int getMonitoringThreadPoolSize() { return monitoringThreadPoolSize; }
+    public void setMonitoringThreadPoolSize(int monitoringThreadPoolSize) { this.monitoringThreadPoolSize = monitoringThreadPoolSize; }
+    public int getPushThreadPoolSize() { return pushThreadPoolSize; }
+    public void setPushThreadPoolSize(int pushThreadPoolSize) { this.pushThreadPoolSize = pushThreadPoolSize; }
+    public int getMaxApiQueriesPerSecond() { return maxApiQueriesPerSecond; }
+    public void setMaxApiQueriesPerSecond(int maxApiQueriesPerSecond) { this.maxApiQueriesPerSecond = maxApiQueriesPerSecond; }
+    public int getMaxPushConnections() { return maxPushConnections; }
+    public void setMaxPushConnections(int maxPushConnections) { this.maxPushConnections = maxPushConnections; }
+
+    public String getPersistMode() { return persistMode; }
+    public void setPersistMode(String persistMode) { this.persistMode = persistMode; }
+
+    public boolean isAuthEnabled() { return authEnabled; }
+    public void setAuthEnabled(boolean authEnabled) { this.authEnabled = authEnabled; }
 }

@@ -2,13 +2,22 @@
   <div class="history-page">
     <div class="page-header">
       <h2 class="page-title">告警历史</h2>
-      <div class="filter-pills">
-        <button class="pill" :class="{ active: activeOnly === false }" @click="activeOnly = false">全部</button>
-        <button class="pill" :class="{ active: activeOnly === true }" @click="activeOnly = true">活跃</button>
+      <div class="filter-bar">
+        <div class="filter-pills">
+          <button class="pill" :class="{ active: activeOnly === false }" @click="activeOnly = false">全部</button>
+          <button class="pill" :class="{ active: activeOnly === true }" @click="activeOnly = true">活跃</button>
+        </div>
+        <div class="time-range">
+          <input v-model="startTime" type="datetime-local" class="time-input" placeholder="开始时间" />
+          <span class="range-sep">-</span>
+          <input v-model="endTime" type="datetime-local" class="time-input" placeholder="结束时间" />
+          <button class="apply-btn" @click="fetchHistory">应用</button>
+        </div>
       </div>
     </div>
 
-    <div v-if="store.events.length === 0" class="empty-state">
+    <div v-if="loading" class="loading-state">加载中...</div>
+    <div v-else-if="pagedEvents.length === 0" class="empty-state">
       <span class="empty-icon">
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       </span>
@@ -16,7 +25,7 @@
     </div>
 
     <div v-else class="timeline">
-      <div v-for="evt in store.events" :key="evt.id" class="timeline-item" :class="{ active: evt.active }">
+      <div v-for="evt in pagedEvents" :key="evt.id" class="timeline-item" :class="{ active: evt.active }">
         <div class="timeline-dot" :class="evt.active ? 'firing' : 'resolved'"></div>
         <div class="timeline-line"></div>
         <div class="timeline-content">
@@ -35,30 +44,80 @@
         </div>
       </div>
     </div>
+
+    <div v-if="totalCount > 0" class="pagination">
+      <button class="page-btn" :disabled="page <= 1" @click="page--; fetchHistory()">上一页</button>
+      <span class="page-info">{{ page }} / {{ totalPages }}</span>
+      <button class="page-btn" :disabled="page >= totalPages" @click="page++; fetchHistory()">下一页</button>
+      <span class="total-info">共 {{ totalCount }} 条</span>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, computed } from 'vue'
 import { useAlertStore } from '../stores/alert'
+import { getAlertHistory } from '../api/alert'
+import type { AlertEvent } from '../types/alert'
 
 const store = useAlertStore()
 const activeOnly = ref(false)
+const loading = ref(false)
+const pagedEvents = ref<AlertEvent[]>([])
+const totalCount = ref(0)
+const page = ref(1)
+const pageSize = ref(20)
+const startTime = ref('')
+const endTime = ref('')
+
+const totalPages = computed(() => Math.max(1, Math.ceil(totalCount.value / pageSize.value)))
 
 const formatTime = (ts: number) => {
   const d = new Date(ts)
   return d.toLocaleString('zh-CN', { hour12: false })
 }
 
-watch(activeOnly, () => store.fetchEvents(activeOnly.value))
-onMounted(() => store.fetchEvents(false))
+const toEpoch = (datetimeLocal: string): number | undefined => {
+  if (!datetimeLocal) return undefined
+  const d = new Date(datetimeLocal)
+  return isNaN(d.getTime()) ? undefined : d.getTime()
+}
+
+const fetchHistory = async () => {
+  loading.value = true
+  try {
+    const result = await getAlertHistory({
+      start: toEpoch(startTime.value),
+      end: toEpoch(endTime.value),
+      page: page.value,
+      size: pageSize.value
+    })
+    let items = result.items
+    if (activeOnly.value) {
+      items = items.filter(e => e.active)
+    }
+    pagedEvents.value = items
+    totalCount.value = result.totalCount
+  } catch {
+    const fallback = activeOnly.value
+    await store.fetchEvents(fallback)
+    pagedEvents.value = store.events
+    totalCount.value = store.events.length
+  } finally {
+    loading.value = false
+  }
+}
+
+watch(activeOnly, () => { page.value = 1; fetchHistory() })
+onMounted(() => fetchHistory())
 </script>
 
 <style scoped>
 .history-page { animation: fadeIn 0.3s ease; }
-.page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+.page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
 .page-title { font-size: 18px; font-weight: 600; color: #fff; margin: 0; }
 
+.filter-bar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .filter-pills { display: flex; gap: 4px; }
 .pill {
   padding: 6px 14px; border: 1px solid rgba(255,255,255,0.06); background: transparent;
@@ -66,6 +125,24 @@ onMounted(() => store.fetchEvents(false))
   cursor: pointer; transition: all 0.15s;
 }
 .pill.active { background: rgba(77,109,255,0.15); color: #4d6dff; border-color: rgba(77,109,255,0.3); }
+
+.time-range { display: flex; align-items: center; gap: 6px; }
+.time-input {
+  padding: 6px 10px; border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 6px; background: rgba(255,255,255,0.04);
+  color: #fff; font-size: 12px; outline: none;
+  transition: border-color 0.2s;
+}
+.time-input:focus { border-color: #4d6dff; }
+.range-sep { color: rgba(255,255,255,0.3); font-size: 12px; }
+.apply-btn {
+  padding: 6px 12px; background: rgba(77,109,255,0.15); color: #4d6dff;
+  border: 1px solid rgba(77,109,255,0.3); border-radius: 6px;
+  font-size: 12px; font-weight: 600; cursor: pointer; transition: background 0.15s;
+}
+.apply-btn:hover { background: rgba(77,109,255,0.25); }
+
+.loading-state { text-align: center; padding: 40px; color: rgba(255,255,255,0.4); font-size: 14px; }
 
 .empty-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 0; }
 .empty-icon { color: rgba(255,255,255,0.15); }
@@ -99,6 +176,20 @@ onMounted(() => store.fetchEvents(false))
 .evt-desc { font-size: 12px; color: rgba(255,255,255,0.6); }
 .evt-desc strong { color: #fff; }
 .evt-time { font-size: 11px; color: rgba(255,255,255,0.3); }
+
+.pagination {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  margin-top: 24px; padding: 12px 0;
+}
+.page-btn {
+  padding: 6px 16px; border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.6);
+  border-radius: 6px; font-size: 12px; cursor: pointer; transition: all 0.15s;
+}
+.page-btn:hover:not(:disabled) { background: rgba(255,255,255,0.08); color: #fff; }
+.page-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.page-info { font-size: 13px; color: rgba(255,255,255,0.6); font-family: 'SF Mono','Fira Code',monospace; }
+.total-info { font-size: 12px; color: rgba(255,255,255,0.4); margin-left: 8px; }
 
 @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 </style>

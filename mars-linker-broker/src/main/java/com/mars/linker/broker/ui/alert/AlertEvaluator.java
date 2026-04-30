@@ -1,8 +1,11 @@
 package com.mars.linker.broker.ui.alert;
 
 import com.mars.linker.broker.netty.MqttProtocolHandler;
+import com.mars.linker.broker.ui.config.RuntimeConfigService;
+import com.mars.linker.broker.ui.monitoring.push.PushDispatcher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -15,19 +18,29 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
+@ConditionalOnProperty(prefix = "mars.linker.ui", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class AlertEvaluator {
 
     private static final Logger log = LoggerFactory.getLogger(AlertEvaluator.class);
 
     private final AlertRuleRepository repository;
+    private final RuntimeConfigService runtimeConfigService;
+    private final PushDispatcher pushDispatcher;
     private final Map<String, Long> violationSince = new ConcurrentHashMap<>();
 
-    public AlertEvaluator(AlertRuleRepository repository) {
+    public AlertEvaluator(AlertRuleRepository repository,
+                          RuntimeConfigService runtimeConfigService,
+                          PushDispatcher pushDispatcher) {
         this.repository = repository;
+        this.runtimeConfigService = runtimeConfigService;
+        this.pushDispatcher = pushDispatcher;
     }
 
     @Scheduled(fixedDelay = 5000)
     public void evaluate() {
+        if (!runtimeConfigService.isAlertEvaluationEnabled()) {
+            return;
+        }
         Map<String, Double> metrics = collectMetrics();
         List<AlertRule> rules = repository.listRules();
         for (AlertRule rule : rules) {
@@ -43,9 +56,16 @@ public class AlertEvaluator {
                 long since = violationSince.get(rule.getId());
                 if (System.currentTimeMillis() - since >= rule.getDurationSeconds() * 1000L) {
                     if (!hasActiveEvent(rule.getId())) {
-                        repository.recordTrigger(rule, value);
-                        log.warn("Alert triggered: {} ({} {} {}, actual={})",
-                                rule.getName(), rule.getMetric(), rule.getOperator(), rule.getThreshold(), value);
+                        boolean silenced = repository.isSilenced(rule.getId());
+                        AlertEvent event = repository.recordTrigger(rule, value);
+                        if (silenced) {
+                            event.setStatus("silenced");
+                            log.info("Alert triggered but silenced: {}", rule.getName());
+                        } else {
+                            log.warn("Alert triggered: {} ({} {} {}, actual={})",
+                                    rule.getName(), rule.getMetric(), rule.getOperator(), rule.getThreshold(), value);
+                            pushDispatcher.pushAlertEvent(event);
+                        }
                     }
                 }
             } else {

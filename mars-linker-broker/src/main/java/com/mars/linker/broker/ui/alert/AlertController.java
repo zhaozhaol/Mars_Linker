@@ -1,5 +1,6 @@
 package com.mars.linker.broker.ui.alert;
 
+import com.mars.linker.broker.ui.monitoring.model.PagedResult;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
@@ -43,8 +44,27 @@ public class AlertController {
         }
     }
 
+    @PostMapping("/rules/{id}/silence")
+    public Map<String, Object> silenceRule(@PathVariable String id, @RequestBody Map<String, Long> body) {
+        Long untilMs = body.get("untilMs");
+        if (untilMs == null || untilMs <= System.currentTimeMillis()) {
+            throw new IllegalArgumentException("untilMs must be a future timestamp");
+        }
+        repository.silenceRule(id, untilMs);
+        return Map.of("ruleId", id, "silencedUntil", untilMs);
+    }
+
     @GetMapping("/events")
     public List<AlertEvent> listEvents(@RequestParam(defaultValue = "false") boolean activeOnly) {
         return repository.listEvents(activeOnly);
+    }
+
+    @GetMapping("/history")
+    public PagedResult<AlertEvent> listHistory(
+            @RequestParam(name = "start", required = false) Long start,
+            @RequestParam(name = "end", required = false) Long end,
+            @RequestParam(name = "page", defaultValue = "1") int page,
+            @RequestParam(name = "size", defaultValue = "50") int size) {
+        return repository.listHistory(start, end, page, size);
     }
 }

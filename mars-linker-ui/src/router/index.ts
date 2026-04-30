@@ -62,6 +62,11 @@ const router = createRouter({
 })
 
 router.beforeEach((to, _from, next) => {
+  const authEnabled = localStorage.getItem('ml_auth_enabled') === 'true'
+  if (!authEnabled) {
+    next()
+    return
+  }
   const token = localStorage.getItem('ml_token')
   if (!to.meta.public && !token) {
     next('/login')

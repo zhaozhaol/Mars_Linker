@@ -1113,6 +1113,13 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         return METRIC_ACL_PUB_DENY_TOTAL.sum();
     }
 
+    public static SubscriptionRegistry subscriptionRegistry() {
+        return SUBSCRIPTION_REGISTRY;
+    }
+
+    public static Map<ChannelId, ChannelHandlerContext> channels() { return CHANNELS; }
+    public static Map<String, ChannelId> clientToChannel() { return CLIENT_TO_CHANNEL; }
+
     private void replayRetainedMessages(ChannelHandlerContext ctx, String topicFilter) {
         String normalizedFilter = topicFilter;
         if (TopicFilterSupport.isShareSubscription(topicFilter)) {

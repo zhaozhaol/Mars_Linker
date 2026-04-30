@@ -12,6 +12,10 @@ public class AlertEvent {
     private long triggeredAt;
     private long resolvedAt;
     private boolean active;
+    /** 事件状态：firing / resolved / silenced。 */
+    private String status = "firing";
+    /** 静默截止时间戳（毫秒），null 表示未静默。 */
+    private Long silencedUntil;
 
     public AlertEvent() {}
 
@@ -35,4 +39,8 @@ public class AlertEvent {
     public void setResolvedAt(long resolvedAt) { this.resolvedAt = resolvedAt; }
     public boolean isActive() { return active; }
     public void setActive(boolean active) { this.active = active; }
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
+    public Long getSilencedUntil() { return silencedUntil; }
+    public void setSilencedUntil(Long silencedUntil) { this.silencedUntil = silencedUntil; }
 }

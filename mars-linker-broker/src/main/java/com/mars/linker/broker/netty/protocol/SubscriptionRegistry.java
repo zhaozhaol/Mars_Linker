@@ -148,6 +148,42 @@ public final class SubscriptionRegistry {
         shareRoundRobin.clear();
     }
 
+    public int subscriptionTotal() {
+        int total = 0;
+        for (Set<ChannelId> subs : exactTopicSubscribers.values()) {
+            total += subs.size();
+        }
+        for (Set<ChannelId> subs : wildcardSubscribers.values()) {
+            total += subs.size();
+        }
+        for (Map<String, CopyOnWriteArraySet<ChannelId>> group : shareSubscribers.values()) {
+            for (Set<ChannelId> subs : group.values()) {
+                total += subs.size();
+            }
+        }
+        return total;
+    }
+
+    public int topicCount() {
+        return exactTopicSubscribers.size() + wildcardSubscribers.size();
+    }
+
+    public int treeDepth() {
+        return wildcardSubscribers.size();
+    }
+
+    public Map<String, CopyOnWriteArraySet<ChannelId>> exactTopicSubscribers() {
+        return exactTopicSubscribers;
+    }
+
+    public Map<String, CopyOnWriteArraySet<ChannelId>> wildcardSubscribers() {
+        return wildcardSubscribers;
+    }
+
+    public Map<String, Map<String, CopyOnWriteArraySet<ChannelId>>> shareSubscribers() {
+        return shareSubscribers;
+    }
+
     private ChannelId selectShareSubscriber(String group,
                                             String filter,
                                             CopyOnWriteArraySet<ChannelId> subscribers,
