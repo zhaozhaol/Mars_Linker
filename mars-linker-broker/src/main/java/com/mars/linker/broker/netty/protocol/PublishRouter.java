@@ -78,7 +78,8 @@ public final class PublishRouter {
                 out.writeShort(topicBytes.length);
                 out.writeBytes(topicBytes);
                 if (mqtt5) {
-                    out.writeByte(0x00); // properties length
+                    // properties length
+                    out.writeByte(0x00);
                 }
                 out.writeBytes(payload);
                 subscriberCtx.writeAndFlush(out);
@@ -94,7 +95,8 @@ public final class PublishRouter {
                 out.writeBytes(topicBytes);
                 out.writeShort(outPacketId);
                 if (mqtt5) {
-                    out.writeByte(0x00); // properties length
+                    // properties length
+                    out.writeByte(0x00);
                 }
                 out.writeBytes(payload);
                 subscriberCtx.writeAndFlush(out);
