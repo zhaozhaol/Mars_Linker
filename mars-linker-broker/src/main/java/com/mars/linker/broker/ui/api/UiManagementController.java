@@ -1,6 +1,8 @@
 package com.mars.linker.broker.ui.api;
 
 import com.mars.linker.broker.config.MarsLinkerMqttBrokerProperties;
+import com.mars.linker.broker.netty.acl.AclProviderFactory;
+import com.mars.linker.broker.netty.acl.PrefixAclProvider;
 import com.mars.linker.broker.ui.collection.CollectedEvent;
 import com.mars.linker.broker.ui.collection.DataCollectionService;
 import com.mars.linker.broker.ui.config.MarsLinkerUiProperties;
@@ -66,6 +68,16 @@ public class UiManagementController {
         }
     }
 
+    @PostMapping("/config/runtime/rollback")
+    public ResponseEntity<?> rollbackRuntimeConfig() {
+        try {
+            return ResponseEntity.ok(runtimeConfigService.rollback());
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+
     @GetMapping("/collection/events")
     public List<CollectedEvent> listCollectedEvents(
             @RequestParam(name = "limit", defaultValue = "50") int limit) {
@@ -78,6 +90,23 @@ public class UiManagementController {
         String source = request == null ? null : request.getSource();
         String payload = request == null ? null : request.getPayload();
         return dataCollectionService.collect(type, source, payload);
+    }
+
+    @PutMapping("/collection/events/{index}/status")
+    public ResponseEntity<?> updateEventStatus(@PathVariable int index,
+                                                @RequestBody Map<String, String> body) {
+        String status = body.get("status");
+        if (status == null || status.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "status required"));
+        }
+        java.util.List<CollectedEvent> events = dataCollectionService.listRecent(1000);
+        if (index < 0 || index >= events.size()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", "Event not found"));
+        }
+        CollectedEvent event = events.get(index);
+        event.markProcessed(status);
+        return ResponseEntity.ok(Map.of("index", index, "status", event.getStatus()));
     }
 
     @GetMapping("/module/info")
@@ -123,6 +152,19 @@ public class UiManagementController {
         result.put("action", action);
         result.put("allowed", allowed);
         return result;
+    }
+
+    @PutMapping("/config/acl/prefixes")
+    public Map<String, Object> updateAclPrefixes(@RequestBody Map<String, List<String>> prefixes) {
+        List<String> allowSub = prefixes.get("allowSubscribePrefixes");
+        List<String> allowPub = prefixes.get("allowPublishPrefixes");
+        List<String> denySub = prefixes.get("denySubscribePrefixes");
+        List<String> denyPub = prefixes.get("denyPublishPrefixes");
+        if (allowSub != null) brokerProperties.setAclAllowSubscribePrefixes(allowSub);
+        if (allowPub != null) brokerProperties.setAclAllowPublishPrefixes(allowPub);
+        if (denySub != null) brokerProperties.setAclDenySubscribePrefixes(denySub);
+        if (denyPub != null) brokerProperties.setAclDenyPublishPrefixes(denyPub);
+        return Map.of("updated", true);
     }
 
     private boolean testSubscribeAcl(String topic) {

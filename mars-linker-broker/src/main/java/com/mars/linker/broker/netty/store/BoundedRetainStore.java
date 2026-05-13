@@ -2,9 +2,9 @@ package com.mars.linker.broker.netty.store;
 
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * RetainStore 包装器：增加 TTL 与总量上限约束。
@@ -13,7 +13,7 @@ public final class BoundedRetainStore implements RetainStore {
     private final RetainStore delegate;
     private final int maxMessages;
     private final long ttlMs;
-    private final Map<String, Long> createdAtByTopic = new HashMap<>();
+    private final Map<String, Long> createdAtByTopic = new ConcurrentHashMap<>();
 
     public BoundedRetainStore(RetainStore delegate, int maxMessages, long ttlMs) {
         this.delegate = delegate;

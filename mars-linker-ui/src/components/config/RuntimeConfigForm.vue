@@ -26,6 +26,7 @@
     </div>
     <div class="form-actions">
       <button class="save-btn" :class="{ disabled: !canSave }" :disabled="!canSave" @click="handleSave">保存变更</button>
+      <button class="rollback-btn" @click="handleRollback">回滚</button>
     </div>
   </div>
 </template>
@@ -36,7 +37,7 @@ import type { RuntimeConfig } from '../../types/monitoring'
 import { formatBoolean } from '../../utils/formatter'
 
 const props = defineProps<{ config: RuntimeConfig | null }>()
-const emit = defineEmits<{ confirm: [form: { collectMode: string; monitorRefreshMs: number }] }>()
+const emit = defineEmits<{ confirm: [form: { collectMode: string; monitorRefreshMs: number }]; rollback: []; saved: [] }>()
 
 const form = reactive({
   collectMode: '',
@@ -66,6 +67,12 @@ const canSave = computed(() => hasChanges.value && !monitorRefreshMsError.value 
 const handleSave = () => {
   if (!canSave.value) return
   emit('confirm', { collectMode: form.collectMode, monitorRefreshMs: form.monitorRefreshMs })
+  emit('saved')
+}
+
+const handleRollback = () => {
+  emit('rollback')
+  emit('saved')
 }
 </script>
 
@@ -111,4 +118,16 @@ const handleSave = () => {
 }
 .save-btn:hover { opacity: 0.9; transform: translateY(-1px); }
 .save-btn.disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+.rollback-btn {
+  padding: 10px 28px;
+  background: transparent;
+  color: #6366f1;
+  border: 1.5px solid #6366f1;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.rollback-btn:hover { background: rgba(99, 102, 241, 0.08); }
 </style>

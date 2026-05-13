@@ -55,8 +55,8 @@ public final class QoS1OutboundService {
     public int nextPacketId(ChannelHandlerContext ctx) {
         AtomicInteger id = ctx.channel().attr(NEXT_OUTBOUND_PACKET_ID).get();
         if (id == null) {
-            id = new AtomicInteger(0);
-            ctx.channel().attr(NEXT_OUTBOUND_PACKET_ID).set(id);
+            AtomicInteger newId = new AtomicInteger(0);
+            id = ctx.channel().attr(NEXT_OUTBOUND_PACKET_ID).compareAndSet(null, newId) ? newId : ctx.channel().attr(NEXT_OUTBOUND_PACKET_ID).get();
         }
         return id.updateAndGet(prev -> {
             int n = prev + 1;

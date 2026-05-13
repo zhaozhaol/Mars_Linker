@@ -31,7 +31,8 @@
         <div class="timeline-content">
           <div class="evt-header">
             <span class="evt-name">{{ evt.ruleName }}</span>
-            <span class="evt-badge" :class="evt.active ? 'firing' : 'resolved'">{{ evt.active ? '告警中' : '已恢复' }}</span>
+            <span class="evt-badge" :class="evt.active ? (evt.severity || 'critical') : 'resolved'">{{ evt.active ? '告警中' : '已恢复' }}</span>
+            <span v-if="evt.severity" class="severity-badge" :class="evt.severity">{{ evt.severity }}</span>
           </div>
           <div class="evt-body">
             <span class="evt-metric">{{ evt.metric }}</span>
@@ -40,6 +41,7 @@
           <div class="evt-time">
             <span>触发: {{ formatTime(evt.triggeredAt) }}</span>
             <span v-if="!evt.active && evt.resolvedAt"> | 恢复: {{ formatTime(evt.resolvedAt) }}</span>
+            <span v-if="evt.resolvedBy"> | 原因: {{ evt.resolvedBy }}</span>
           </div>
         </div>
       </div>
@@ -170,6 +172,12 @@ onMounted(() => fetchHistory())
 .evt-badge { padding: 2px 8px; border-radius: 6px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .evt-badge.firing { background: rgba(239,68,68,0.15); color: #ef4444; }
 .evt-badge.resolved { background: rgba(16,185,129,0.15); color: #10b981; }
+.evt-badge.warning { background: rgba(245,158,11,0.15); color: #f59e0b; }
+.evt-badge.info { background: rgba(59,130,246,0.15); color: #3b82f6; }
+.severity-badge { padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; }
+.severity-badge.critical { background: rgba(239,68,68,0.12); color: #ef4444; }
+.severity-badge.warning { background: rgba(245,158,11,0.12); color: #f59e0b; }
+.severity-badge.info { background: rgba(59,130,246,0.12); color: #3b82f6; }
 
 .evt-body { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .evt-metric { font-size: 12px; color: #7c5cfc; font-family: 'SF Mono','Fira Code',monospace; }

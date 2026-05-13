@@ -27,6 +27,8 @@ public class AlertEvaluator {
     private final RuntimeConfigService runtimeConfigService;
     private final PushDispatcher pushDispatcher;
     private final Map<String, Long> violationSince = new ConcurrentHashMap<>();
+    private final Map<String, Long> lastTriggerAt = new ConcurrentHashMap<>();
+    private static final long ALERT_DEBOUNCE_MS = 10_000L;
 
     public AlertEvaluator(AlertRuleRepository repository,
                           RuntimeConfigService runtimeConfigService,
@@ -56,8 +58,14 @@ public class AlertEvaluator {
                 long since = violationSince.get(rule.getId());
                 if (System.currentTimeMillis() - since >= rule.getDurationSeconds() * 1000L) {
                     if (!hasActiveEvent(rule.getId())) {
+                        Long lastTrigger = lastTriggerAt.get(rule.getId());
+                        if (lastTrigger != null && System.currentTimeMillis() - lastTrigger < ALERT_DEBOUNCE_MS) {
+                            log.debug("Alert debounced: {}", rule.getName());
+                            continue;
+                        }
                         boolean silenced = repository.isSilenced(rule.getId());
                         AlertEvent event = repository.recordTrigger(rule, value);
+                        lastTriggerAt.put(rule.getId(), System.currentTimeMillis());
                         if (silenced) {
                             event.setStatus("silenced");
                             log.info("Alert triggered but silenced: {}", rule.getName());

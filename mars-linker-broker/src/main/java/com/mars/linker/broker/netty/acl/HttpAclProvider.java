@@ -11,9 +11,9 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
@@ -174,9 +174,13 @@ public final class HttpAclProvider implements AclProvider {
             if (v == null || v.isEmpty()) {
                 return Collections.emptyList();
             }
-            v.removeIf(Objects::isNull);
-            v.removeIf(String::isEmpty);
-            return v;
+            List<String> filtered = new ArrayList<>(v.size());
+            for (String s : v) {
+                if (s != null && !s.isEmpty()) {
+                    filtered.add(s);
+                }
+            }
+            return Collections.unmodifiableList(filtered);
         }
     }
 }

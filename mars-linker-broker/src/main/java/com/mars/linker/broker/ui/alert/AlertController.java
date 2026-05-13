@@ -67,4 +67,24 @@ public class AlertController {
             @RequestParam(name = "size", defaultValue = "50") int size) {
         return repository.listHistory(start, end, page, size);
     }
+
+    @PutMapping("/events/{id}/acknowledge")
+    public AlertEvent acknowledgeEvent(@PathVariable String id,
+                                       @RequestHeader(value = "X-User", defaultValue = "system") String user) {
+        AlertEvent event = repository.acknowledgeEvent(id, user);
+        if (event == null) {
+            throw new IllegalArgumentException("Active event not found: " + id);
+        }
+        return event;
+    }
+
+    @PutMapping("/events/{id}/resolve")
+    public AlertEvent resolveEvent(@PathVariable String id,
+                                   @RequestHeader(value = "X-User", defaultValue = "system") String user) {
+        AlertEvent event = repository.manualResolveEvent(id, user);
+        if (event == null) {
+            throw new IllegalArgumentException("Active event not found: " + id);
+        }
+        return event;
+    }
 }

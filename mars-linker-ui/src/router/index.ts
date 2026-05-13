@@ -57,6 +57,11 @@ const router = createRouter({
       path: '/alert/history',
       name: 'AlertHistory',
       component: () => import('../views/AlertHistory.vue')
+    },
+    {
+      path: '/audit',
+      name: 'AuditLog',
+      component: () => import('../views/AuditLog.vue')
     }
   ]
 })
@@ -68,9 +73,24 @@ router.beforeEach((to, _from, next) => {
     return
   }
   const token = localStorage.getItem('ml_token')
-  if (!to.meta.public && !token) {
+  const isTokenValid = (): boolean => {
+    if (!token) return false
+    try {
+      const parts = token.split('.')
+      if (parts.length < 2) return false
+      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')))
+      if (payload.exp && payload.exp * 1000 < Date.now()) return false
+      return true
+    } catch {
+      return false
+    }
+  }
+  if (!to.meta.public && !isTokenValid()) {
+    localStorage.removeItem('ml_token')
+    localStorage.removeItem('ml_refresh_token')
+    localStorage.removeItem('ml_user')
     next('/login')
-  } else if (to.path === '/login' && token) {
+  } else if (to.path === '/login' && isTokenValid()) {
     next('/')
   } else {
     next()

@@ -25,6 +25,10 @@ public final class PublishRouter {
         public void track(ChannelHandlerContext ctx, int packetId, String topic, byte[] payload, boolean retain);
     }
 
+    public interface QoS2OutboundPublisher {
+        public void publishQos2(ChannelHandlerContext ctx, String topic, byte[] payload, boolean retain, int packetId);
+    }
+
     private PublishRouter() {
     }
 
@@ -40,6 +44,7 @@ public final class PublishRouter {
                                         SubscriptionRegistry.GrantedQosLookup grantedQosLookup,
                                         PacketIdSupplier packetIdSupplier,
                                         OutboundTracker outboundTracker,
+                                        QoS2OutboundPublisher qos2Publisher,
                                         Logger log) {
         Map<ChannelId, Integer> grantedQosBySubscriber = subscriptionRegistry.collectGrantedQos(
                 topic,
@@ -78,11 +83,15 @@ public final class PublishRouter {
                 out.writeShort(topicBytes.length);
                 out.writeBytes(topicBytes);
                 if (mqtt5) {
-                    // properties length
                     out.writeByte(0x00);
                 }
                 out.writeBytes(payload);
                 subscriberCtx.writeAndFlush(out);
+            } else if (eff == 2 && qos2Publisher != null) {
+                int outPacketId = packetIdSupplier.next(subscriberCtx);
+                qos2Publisher.publishQos2(subscriberCtx, topic, payload, retain, outPacketId);
+                log.debug("下行 PUBLISH QoS2 topic={} outPacketId={} -> subscriberChannelId={}",
+                        topic, outPacketId, subscriberId.asShortText());
             } else {
                 int outPacketId = packetIdSupplier.next(subscriberCtx);
                 outboundTracker.track(subscriberCtx, outPacketId, topic, payload, retain);
@@ -155,13 +164,10 @@ public final class PublishRouter {
     }
 
     /**
-     * Broker 下行仅支持 QoS0/1：即使发布端与订阅端都声明 QoS2，也会降级为 QoS1。
+     * Broker 下行 QoS 取 min(pubQos, subQos)，支持 QoS0/1/2。
      */
     private static int normalizeEffectiveQos(int pubQos, int subQos) {
         int eff = Math.min(pubQos, subQos);
-        if (eff <= 0) {
-            return 0;
-        }
-        return Math.min(eff, 1);
+        return Math.max(eff, 0);
     }
 }

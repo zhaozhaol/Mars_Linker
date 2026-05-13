@@ -1,5 +1,6 @@
 package com.mars.linker.broker.ui.monitoring;
 
+import com.mars.linker.broker.netty.MqttProtocolHandler;
 import com.mars.linker.broker.ui.monitoring.history.MonitoringHistoryService;
 import com.mars.linker.broker.ui.monitoring.isolation.ApiRateLimiter;
 import com.mars.linker.broker.ui.monitoring.push.MonitoringSseHandler;
@@ -27,6 +28,7 @@ public class MonitoringController {
     private final MonitoringSseHandler monitoringSseHandler;
     private final MonitoringSelfMetricsService selfMetricsService;
     private final SubscriptionDetailService subscriptionDetailService;
+    private final MqttProtocolHandler protocolHandler;
 
     public MonitoringController(MonitoringService monitoringService,
                                 MetricCategoryService metricCategoryService,
@@ -34,7 +36,8 @@ public class MonitoringController {
                                 MonitoringHistoryService monitoringHistoryService,
                                 MonitoringSseHandler monitoringSseHandler,
                                 MonitoringSelfMetricsService selfMetricsService,
-                                SubscriptionDetailService subscriptionDetailService) {
+                                SubscriptionDetailService subscriptionDetailService,
+                                MqttProtocolHandler protocolHandler) {
         this.monitoringService = monitoringService;
         this.metricCategoryService = metricCategoryService;
         this.apiRateLimiter = apiRateLimiter;
@@ -42,6 +45,7 @@ public class MonitoringController {
         this.monitoringSseHandler = monitoringSseHandler;
         this.selfMetricsService = selfMetricsService;
         this.subscriptionDetailService = subscriptionDetailService;
+        this.protocolHandler = protocolHandler;
     }
 
     private ResponseEntity<?> checkRateLimit() {
@@ -147,5 +151,33 @@ public class MonitoringController {
         ResponseEntity<?> limitCheck = checkRateLimit();
         if (limitCheck != null) return limitCheck;
         return ResponseEntity.ok(subscriptionDetailService.listClientSubscriptions(clientId));
+    }
+
+    @DeleteMapping("/connections/{clientId}")
+    public ResponseEntity<?> disconnectClient(@PathVariable String clientId,
+                                              @RequestParam(name = "reason", defaultValue = "kicked_by_admin") String reason) {
+        boolean disconnected = protocolHandler.disconnectClient(clientId, reason);
+        if (disconnected) {
+            return ResponseEntity.ok(Map.of("clientId", clientId, "disconnected", true));
+        }
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("error", "Client not found or already disconnected: " + clientId));
+    }
+
+    @PostMapping("/connections/batch-disconnect")
+    public ResponseEntity<?> batchDisconnect(@RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        java.util.List<String> clientIds = (java.util.List<String>) body.get("clientIds");
+        String reason = (String) body.getOrDefault("reason", "kicked_by_admin");
+        if (clientIds == null || clientIds.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "clientIds required"));
+        }
+        int disconnected = 0;
+        for (String cid : clientIds) {
+            if (protocolHandler.disconnectClient(cid, reason)) {
+                disconnected++;
+            }
+        }
+        return ResponseEntity.ok(Map.of("requested", clientIds.size(), "disconnected", disconnected));
     }
 }

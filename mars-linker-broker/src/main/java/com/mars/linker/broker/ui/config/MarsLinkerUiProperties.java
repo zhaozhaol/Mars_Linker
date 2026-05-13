@@ -65,6 +65,21 @@ public class MarsLinkerUiProperties {
     /** 是否启用 API 鉴权（默认关闭，需要 JWT token）。 */
     private boolean authEnabled = false;
 
+    /** JWT 签名密钥（HMAC-SHA256，至少 256 位 / 32 字节）。 */
+    private String jwtSecretKey = "change-me-to-a-secure-random-secret-key-32bytes!";
+
+    /** Access Token 过期时间（秒），默认 15 分钟。 */
+    private int jwtExpireSeconds = 900;
+
+    /** Refresh Token 过期时间（秒）。 */
+    private int jwtRefreshExpireSeconds = 86400;
+
+    /** 管理员用户名。 */
+    private String adminUsername = "admin";
+
+    /** 管理员密码。 */
+    private String adminPassword = "admin";
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -128,4 +143,15 @@ public class MarsLinkerUiProperties {
 
     public boolean isAuthEnabled() { return authEnabled; }
     public void setAuthEnabled(boolean authEnabled) { this.authEnabled = authEnabled; }
+
+    public String getJwtSecretKey() { return jwtSecretKey; }
+    public void setJwtSecretKey(String jwtSecretKey) { this.jwtSecretKey = jwtSecretKey; }
+    public int getJwtExpireSeconds() { return jwtExpireSeconds; }
+    public void setJwtExpireSeconds(int jwtExpireSeconds) { this.jwtExpireSeconds = jwtExpireSeconds; }
+    public int getJwtRefreshExpireSeconds() { return jwtRefreshExpireSeconds; }
+    public void setJwtRefreshExpireSeconds(int jwtRefreshExpireSeconds) { this.jwtRefreshExpireSeconds = jwtRefreshExpireSeconds; }
+    public String getAdminUsername() { return adminUsername; }
+    public void setAdminUsername(String adminUsername) { this.adminUsername = adminUsername; }
+    public String getAdminPassword() { return adminPassword; }
+    public void setAdminPassword(String adminPassword) { this.adminPassword = adminPassword; }
 }

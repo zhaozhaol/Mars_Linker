@@ -22,13 +22,16 @@ public class MetricCategoryService {
     private final MarsLinkerUiProperties uiProperties;
     private final MonitoringService monitoringService;
     private final SystemHealthService systemHealthService;
+    private final MqttProtocolHandler protocolHandler;
 
     public MetricCategoryService(MarsLinkerUiProperties uiProperties,
                                  MonitoringService monitoringService,
-                                 SystemHealthService systemHealthService) {
+                                 SystemHealthService systemHealthService,
+                                 MqttProtocolHandler protocolHandler) {
         this.uiProperties = uiProperties;
         this.monitoringService = monitoringService;
         this.systemHealthService = systemHealthService;
+        this.protocolHandler = protocolHandler;
     }
 
     public ConnectionMetrics connectionMetrics() {
@@ -67,7 +70,7 @@ public class MetricCategoryService {
         return MonitoringFaultBoundary.executeWithResult(() -> {
             long now = System.currentTimeMillis();
             try {
-                var registry = MqttProtocolHandler.subscriptionRegistry();
+                var registry = protocolHandler.subscriptionRegistry();
                 return new SubscriptionMetrics(now,
                         registry.subscriptionTotal(),
                         registry.topicCount(),

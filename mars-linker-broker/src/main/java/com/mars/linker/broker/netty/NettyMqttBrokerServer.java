@@ -87,6 +87,10 @@ public class NettyMqttBrokerServer implements SmartLifecycle {
         this.sslContext = buildServerSslContextIfNeeded(properties);
     }
 
+    public MqttProtocolHandler getMqttProtocolHandler() {
+        return mqttProtocolHandler;
+    }
+
     @Override
     public void start() {
         if (running) {
@@ -195,7 +199,7 @@ public class NettyMqttBrokerServer implements SmartLifecycle {
         try {
             resource.close();
         } catch (Exception e) {
-            log.warn("关闭资源 {} 失败: {}", name, e.toString());
+            log.warn("关闭资源 {} 失败", name, e);
         }
     }
 }

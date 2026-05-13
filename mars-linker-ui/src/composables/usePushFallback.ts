@@ -14,8 +14,11 @@ export function usePushFallback(categories: string[] = ['all']) {
   const sse = useSSE(sseUrl)
 
   let pollingCleanup: (() => void) | null = null
+  let sseRetryTimer: ReturnType<typeof setInterval> | null = null
+  let currentOnMessage: ((msg: any) => void) | null = null
 
   function connect(onMessage: (msg: any) => void) {
+    currentOnMessage = onMessage
     mode.value = 'sse'
     sse.connect((msg) => {
       connected.value = true
@@ -24,12 +27,17 @@ export function usePushFallback(categories: string[] = ['all']) {
 
     setTimeout(() => {
       if (!sse.connected.value) {
-        mode.value = 'polling'
-        connected.value = false
-        sse.disconnect()
-        startPolling(onMessage)
+        fallbackToPolling(onMessage)
       }
     }, 3000)
+  }
+
+  function fallbackToPolling(onMessage: (msg: any) => void) {
+    mode.value = 'polling'
+    connected.value = false
+    sse.disconnect()
+    startPolling(onMessage)
+    startSseRetry()
   }
 
   function startPolling(onMessage: (msg: any) => void) {
@@ -49,9 +57,30 @@ export function usePushFallback(categories: string[] = ['all']) {
     pollingCleanup = stop
   }
 
+  function startSseRetry() {
+    if (sseRetryTimer !== null) return
+    sseRetryTimer = setInterval(() => {
+      if (mode.value !== 'polling') return
+      try {
+        const testSse = new EventSource(sseUrl)
+        testSse.onopen = () => {
+          testSse.close()
+          if (pollingCleanup) { pollingCleanup(); pollingCleanup = null }
+          if (sseRetryTimer !== null) { clearInterval(sseRetryTimer); sseRetryTimer = null }
+          if (currentOnMessage) {
+            mode.value = 'sse'
+            sse.connect(currentOnMessage)
+          }
+        }
+        testSse.onerror = () => { testSse.close() }
+      } catch { /* ignore */ }
+    }, 30000)
+  }
+
   function disconnect() {
     sse.disconnect()
     if (pollingCleanup) { pollingCleanup(); pollingCleanup = null }
+    if (sseRetryTimer !== null) { clearInterval(sseRetryTimer); sseRetryTimer = null }
     connected.value = false
   }
 

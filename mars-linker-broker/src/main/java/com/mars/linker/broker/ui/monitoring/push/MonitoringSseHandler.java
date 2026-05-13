@@ -12,6 +12,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Component
 @ConditionalOnProperty(prefix = "mars.linker.ui", name = "enabled", havingValue = "true", matchIfMissing = true)
@@ -21,6 +22,7 @@ public class MonitoringSseHandler {
 
     private final CopyOnWriteArrayList<SseConnection> connections = new CopyOnWriteArrayList<>();
     private final MonitoringResourceBudget resourceBudget;
+    private final AtomicLong eventIdSeq = new AtomicLong(1);
 
     public MonitoringSseHandler(MonitoringResourceBudget resourceBudget) {
         this.resourceBudget = resourceBudget;
@@ -47,6 +49,7 @@ public class MonitoringSseHandler {
                 if (conn.categories.contains(message.getCategory()) || conn.categories.contains("all")) {
                     try {
                         conn.emitter.send(SseEmitter.event()
+                                .id(String.valueOf(eventIdSeq.getAndIncrement()))
                                 .name(message.getType())
                                 .data(message));
                     } catch (IOException e) {

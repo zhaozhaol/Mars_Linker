@@ -74,11 +74,20 @@ const handleLogin = async () => {
   loading.value = true
   errorMsg.value = ''
   try {
-    await new Promise(resolve => setTimeout(resolve, 600))
-    authStore.login(form.username, 'session-token-' + Date.now())
+    const resp = await fetch('/api/ui/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: form.username, password: form.password })
+    })
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}))
+      throw new Error(data.error || '登录失败')
+    }
+    const data = await resp.json()
+    authStore.login(form.username, data.accessToken, data.refreshToken, data.expiresIn)
     router.push('/')
-  } catch {
-    errorMsg.value = '登录失败，请检查用户名和密码'
+  } catch (e: any) {
+    errorMsg.value = e.message || '登录失败，请检查用户名和密码'
   } finally {
     loading.value = false
   }

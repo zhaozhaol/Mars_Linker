@@ -14,6 +14,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Stream;
 
 /**
  * 最小可用的 Retain 持久化实现（文件存储）。
@@ -55,52 +56,60 @@ public class FileRetainStore implements RetainStore {
         if (!Files.exists(storePath)) {
             return;
         }
-        try {
-            List<String> lines = Files.readAllLines(storePath, StandardCharsets.UTF_8);
-            if (lines.isEmpty()) {
-                return;
-            }
-            String header = lines.get(0);
-            if (!RETAIN_STORE_HEADER.equals(header)) {
-                log.warn("retain store header mismatch, ignore load. path={} header={} expected={}",
-                        storePath, header, RETAIN_STORE_HEADER);
-                return;
-            }
-            lines = lines.subList(1, lines.size());
-            for (String line : lines) {
+        try (Stream<String> stream = Files.lines(storePath, StandardCharsets.UTF_8)) {
+            String[] headerHolder = {null};
+            stream.forEach(line -> {
+                if (headerHolder[0] == null) {
+                    headerHolder[0] = line;
+                    if (!RETAIN_STORE_HEADER.equals(line)) {
+                        log.warn("retain store header mismatch, ignore load. path={} header={} expected={}",
+                                storePath, line, RETAIN_STORE_HEADER);
+                        throw new StopProcessing();
+                    }
+                    return;
+                }
                 String[] parts = line.split("\t", 3);
                 if (parts.length != 3) {
-                    continue;
+                    return;
                 }
                 String topic = parts[0];
                 if (topic == null || topic.isEmpty()) {
-                    continue;
+                    return;
                 }
                 int qos;
                 try {
                     qos = Integer.parseInt(parts[1]);
                 } catch (NumberFormatException e) {
-                    continue;
+                    return;
                 }
                 if (qos < 0 || qos > 2) {
-                    continue;
+                    return;
                 }
                 byte[] payload;
                 try {
                     payload = Base64.getDecoder().decode(parts[2]);
                 } catch (IllegalArgumentException e) {
-                    continue;
+                    return;
                 }
                 if (payload.length > MAX_RETAINED_PAYLOAD_BYTES) {
                     log.warn("skip oversized retained payload topic={} bytes={} max={}",
                             topic, payload.length, MAX_RETAINED_PAYLOAD_BYTES);
-                    continue;
+                    return;
                 }
                 retained.put(topic, new RetainedMessage(topic, payload, qos));
-            }
+            });
+        } catch (StopProcessing ignored) {
+            // header mismatch, already logged
         } catch (IOException e) {
-            // 最小 PoC：读失败时保持内存空，不中断 Broker 启动。
             log.warn("failed to load retain store path={}", storePath, e);
+        }
+    }
+
+    @SuppressWarnings("serial")
+    private static final class StopProcessing extends RuntimeException {
+        @Override
+        public synchronized Throwable fillInStackTrace() {
+            return this;
         }
     }
 

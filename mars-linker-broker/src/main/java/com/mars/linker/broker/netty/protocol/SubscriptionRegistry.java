@@ -54,37 +54,31 @@ public final class SubscriptionRegistry {
             if (ss == null) {
                 return false;
             }
-            Map<String, CopyOnWriteArraySet<ChannelId>> m = shareSubscribers.get(ss.group);
-            if (m == null) {
-                return false;
-            }
-            Set<ChannelId> subscribers = m.get(ss.filter);
-            if (subscribers != null) {
-                removed = subscribers.remove(channelId);
-                if (subscribers.isEmpty()) {
-                    m.remove(ss.filter);
-                }
-            }
-            if (m.isEmpty()) {
-                shareSubscribers.remove(ss.group);
-            }
-            return removed;
+            final boolean[] r = {false};
+            shareSubscribers.computeIfPresent(ss.group, (group, filterMap) -> {
+                filterMap.computeIfPresent(ss.filter, (filter, subscribers) -> {
+                    r[0] = subscribers.remove(channelId);
+                    return subscribers.isEmpty() ? null : subscribers;
+                });
+                return filterMap.isEmpty() ? null : filterMap;
+            });
+            return r[0];
         }
         Map<String, CopyOnWriteArraySet<ChannelId>> target = TopicFilterSupport.isExactTopic(topicFilter)
                 ? exactTopicSubscribers
                 : wildcardSubscribers;
-        Set<ChannelId> subscribers = target.get(topicFilter);
-        if (subscribers == null) {
-            return false;
-        }
-        removed = subscribers.remove(channelId);
-        if (subscribers.isEmpty()) {
-            target.remove(topicFilter);
-            if (!TopicFilterSupport.isExactTopic(topicFilter)) {
-                wildcardFilterIndex.remove(topicFilter);
+        final boolean[] r = {false};
+        target.computeIfPresent(topicFilter, (filter, subscribers) -> {
+            r[0] = subscribers.remove(channelId);
+            if (subscribers.isEmpty()) {
+                if (!TopicFilterSupport.isExactTopic(topicFilter)) {
+                    wildcardFilterIndex.remove(topicFilter);
+                }
+                return null;
             }
-        }
-        return removed;
+            return subscribers;
+        });
+        return r[0];
     }
 
     public Map<ChannelId, Integer> collectGrantedQos(String topic,
@@ -197,7 +191,7 @@ public final class SubscriptionRegistry {
         }
         String key = group + "|" + filter;
         AtomicInteger rr = shareRoundRobin.computeIfAbsent(key, k -> new AtomicInteger(0));
-        int start = Math.floorMod(rr.getAndIncrement(), arr.length);
+        int start = Math.floorMod(rr.getAndIncrement() & 0x7FFFFFFF, arr.length);
         for (int i = 0; i < arr.length; i++) {
             ChannelId candidate = arr[(start + i) % arr.length];
             if (activeProbe.isActive(candidate)) {

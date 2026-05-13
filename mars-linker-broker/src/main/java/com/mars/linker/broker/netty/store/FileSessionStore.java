@@ -14,6 +14,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Stream;
 import com.mars.linker.broker.netty.protocol.TopicFilterSupport;
 
 /**
@@ -38,23 +39,22 @@ public final class FileSessionStore implements SessionStore {
         if (!Files.exists(storePath)) {
             return new ConcurrentHashMap<>();
         }
-        try {
-            List<String> lines = Files.readAllLines(storePath, StandardCharsets.UTF_8);
-            if (lines.isEmpty()) {
-                return new ConcurrentHashMap<>();
-            }
-            String header = lines.get(0);
-            if (!SESSION_STORE_HEADER.equals(header)) {
-                log.warn("session store header mismatch, ignore load. path={} header={} expected={}",
-                        storePath, header, SESSION_STORE_HEADER);
-                return new ConcurrentHashMap<>();
-            }
-            Map<String, SessionService.Session> sessions = new ConcurrentHashMap<>();
-            lines = lines.subList(1, lines.size());
-            for (String line : lines) {
+        Map<String, SessionService.Session> sessions = new ConcurrentHashMap<>();
+        try (Stream<String> stream = Files.lines(storePath, StandardCharsets.UTF_8)) {
+            String[] headerHolder = {null};
+            stream.forEach(line -> {
+                if (headerHolder[0] == null) {
+                    headerHolder[0] = line;
+                    if (!SESSION_STORE_HEADER.equals(line)) {
+                        log.warn("session store header mismatch, ignore load. path={} header={} expected={}",
+                                storePath, line, SESSION_STORE_HEADER);
+                        throw new StopProcessing();
+                    }
+                    return;
+                }
                 String[] p = line.split("\t");
                 if (p.length < 4) {
-                    continue;
+                    return;
                 }
                 String kind = p[0];
                 String clientId = p[1];
@@ -63,44 +63,51 @@ public final class FileSessionStore implements SessionStore {
                     try {
                         int qos = Integer.parseInt(p[3]);
                         if (qos < 0 || qos > 2) {
-                            continue;
+                            return;
                         }
                         String filter = p[2];
                         if (!TopicFilterSupport.isValidTopicFilter(filter)
                                 && !TopicFilterSupport.isShareSubscription(filter)
                                 && !TopicFilterSupport.isExactTopic(filter)) {
-                            continue;
+                            return;
                         }
                         session.subscriptionsQos.put(filter, qos);
                     } catch (NumberFormatException ignored) {
-                        // skip malformed subscription line
                     }
                 } else if ("MSG".equals(kind) && p.length >= 6) {
                     try {
                         String topic = p[2];
                         int qos = Integer.parseInt(p[3]);
                         if (qos < 0 || qos > 2 || !TopicFilterSupport.isExactTopic(topic)) {
-                            continue;
+                            return;
                         }
                         boolean retain = "1".equals(p[4]);
                         long createdAtMs = p.length >= 7 ? Long.parseLong(p[5]) : System.currentTimeMillis();
                         byte[] payload = Base64.getDecoder().decode(p.length >= 7 ? p[6] : p[5]);
                         if (payload.length > MAX_PERSISTED_MESSAGE_BYTES) {
-                            continue;
+                            return;
                         }
                         if (session.offlineQueue.size() >= MAX_OFFLINE_QUEUE_PER_SESSION) {
-                            continue;
+                            return;
                         }
                         session.offlineQueue.add(new SessionService.QueuedMessage(topic, payload, retain, qos, createdAtMs));
                     } catch (RuntimeException ignored) {
-                        // skip malformed message line
                     }
                 }
-            }
-            return sessions;
+            });
+        } catch (StopProcessing ignored) {
         } catch (IOException e) {
             log.warn("会话持久化读取失败 path={}", storePath, e);
             return new ConcurrentHashMap<>();
+        }
+        return sessions;
+    }
+
+    @SuppressWarnings("serial")
+    private static final class StopProcessing extends RuntimeException {
+        @Override
+        public synchronized Throwable fillInStackTrace() {
+            return this;
         }
     }
 

@@ -65,6 +65,7 @@ public final class SessionService {
     private final Set<String> removedClientIds = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean fullPersistDirty = new AtomicBoolean(false);
 
+    @Deprecated
     public static final SessionService INSTANCE = new SessionService(
             new FileSessionStore(java.nio.file.Paths.get("data", "session-store.tsv")),
             10_000,
@@ -81,7 +82,6 @@ public final class SessionService {
             return t;
         };
         this.persistExecutor = Executors.newSingleThreadScheduledExecutor(tf);
-        Runtime.getRuntime().addShutdownHook(new Thread(this::shutdownAndFlush, "session-store-shutdown"));
         this.sessions.putAll(store.loadAll());
         long now = System.currentTimeMillis();
         for (Session session : this.sessions.values()) {
@@ -98,7 +98,7 @@ public final class SessionService {
 
     public static SessionService create(SessionStore store, int offlineMaxMessages, long offlineTtlMs) {
         if (store == null) {
-            return INSTANCE;
+            store = new NoopSessionStore();
         }
         return new SessionService(store, offlineMaxMessages, offlineTtlMs);
     }

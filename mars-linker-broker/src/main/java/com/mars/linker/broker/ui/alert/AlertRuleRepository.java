@@ -40,6 +40,8 @@ public class AlertRuleRepository {
     public Optional<AlertRule> updateRule(String id, AlertRule update) {
         validateRule(update);
         return Optional.ofNullable(rules.computeIfPresent(id, (k, existing) -> {
+            boolean thresholdChanged = existing.getThreshold() != update.getThreshold()
+                    || !existing.getOperator().equals(update.getOperator());
             existing.setName(update.getName());
             existing.setMetric(update.getMetric());
             existing.setOperator(update.getOperator());
@@ -47,6 +49,16 @@ public class AlertRuleRepository {
             existing.setDurationSeconds(update.getDurationSeconds());
             existing.setEnabled(update.isEnabled());
             existing.setUpdatedAt(System.currentTimeMillis());
+            if (thresholdChanged) {
+                for (AlertEvent e : events) {
+                    if (e.getRuleId().equals(id) && e.isActive()) {
+                        e.setActive(false);
+                        e.setResolvedAt(System.currentTimeMillis());
+                        e.setResolvedBy("threshold_change");
+                        e.setStatus("resolved");
+                    }
+                }
+            }
             return existing;
         }));
     }
@@ -115,7 +127,7 @@ public class AlertRuleRepository {
         event.setMetric(rule.getMetric());
         event.setActualValue(actualValue);
         event.setThreshold(rule.getThreshold());
-        event.setSeverity("critical");
+        event.setSeverity(rule.getSeverity() != null ? rule.getSeverity() : "critical");
         event.setTriggeredAt(System.currentTimeMillis());
         event.setActive(true);
         events.add(0, event);
@@ -128,8 +140,29 @@ public class AlertRuleRepository {
             if (e.getRuleId().equals(ruleId) && e.isActive()) {
                 e.setActive(false);
                 e.setResolvedAt(System.currentTimeMillis());
+                e.setStatus("resolved");
             }
         }
+    }
+
+    public AlertEvent acknowledgeEvent(String eventId, String user) {
+        for (AlertEvent e : events) {
+            if (e.getId().equals(eventId) && e.isActive()) {
+                e.acknowledge(user);
+                return e;
+            }
+        }
+        return null;
+    }
+
+    public AlertEvent manualResolveEvent(String eventId, String user) {
+        for (AlertEvent e : events) {
+            if (e.getId().equals(eventId) && e.isActive()) {
+                e.manualResolve(user);
+                return e;
+            }
+        }
+        return null;
     }
 
     public void validateRule(AlertRule rule) {

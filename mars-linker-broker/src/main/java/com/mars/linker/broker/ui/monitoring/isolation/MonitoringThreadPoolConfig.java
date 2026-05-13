@@ -1,5 +1,6 @@
 package com.mars.linker.broker.ui.monitoring.isolation;
 
+import com.mars.linker.broker.netty.MqttProtocolHandler;
 import com.mars.linker.broker.ui.config.MarsLinkerUiProperties;
 import com.mars.linker.broker.ui.monitoring.SubscriptionDetailService;
 import com.mars.linker.broker.ui.monitoring.sampling.SampleRateFilter;
@@ -79,7 +80,7 @@ public class MonitoringThreadPoolConfig {
     }
 
     @Bean
-    public SubscriptionDetailService subscriptionDetailService() {
-        return new SubscriptionDetailService();
+    public SubscriptionDetailService subscriptionDetailService(MqttProtocolHandler protocolHandler) {
+        return new SubscriptionDetailService(protocolHandler);
     }
 }

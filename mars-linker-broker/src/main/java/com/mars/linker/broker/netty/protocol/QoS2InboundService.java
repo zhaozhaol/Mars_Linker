@@ -72,8 +72,10 @@ public final class QoS2InboundService {
             log.debug("PUBREL 已处理并投递 topic={} packetId={} channelId={}",
                     msg.topic, packetId, ctx.channel().id().asShortText());
         } else {
-            log.debug("PUBREL packetId={} 未找到待确认消息（幂等处理） channelId={}",
+            log.warn("PUBREL packetId={} 无对应 pending 消息，协议违规关闭连接 channelId={}",
                     packetId, ctx.channel().id().asShortText());
+            ctx.close();
+            return;
         }
         writePubComp(ctx, packetId);
     }

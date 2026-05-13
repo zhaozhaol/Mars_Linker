@@ -1,14 +1,19 @@
 package com.mars.linker.broker.ui.logstream;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mars.linker.broker.ui.config.MarsLinkerUiProperties;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.handler.codec.http.HttpRequest;
+import io.netty.handler.codec.http.QueryStringDecoder;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.WebSocketServerProtocolHandler;
+import com.nimbusds.jwt.SignedJWT;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -21,10 +26,23 @@ public class LogStreamWsHandler extends SimpleChannelInboundHandler<TextWebSocke
     private static final CopyOnWriteArrayList<String> recentLogs = new CopyOnWriteArrayList<>();
     private static final ObjectMapper objectMapper = new ObjectMapper();
     private static final AtomicLong logCounter = new AtomicLong(0);
+    private final MarsLinkerUiProperties uiProperties;
+
+    public LogStreamWsHandler(MarsLinkerUiProperties uiProperties) {
+        this.uiProperties = uiProperties;
+    }
 
     @Override
     public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
         if (evt instanceof WebSocketServerProtocolHandler.HandshakeComplete) {
+            if (uiProperties.isAuthEnabled()) {
+                WebSocketServerProtocolHandler.HandshakeComplete handshake = (WebSocketServerProtocolHandler.HandshakeComplete) evt;
+                if (!validateWsToken(handshake.requestUri())) {
+                    log.warn("Log stream WS auth failed, closing: {}", ctx.channel().id());
+                    ctx.close();
+                    return;
+                }
+            }
             channels.add(ctx.channel());
             for (String entry : recentLogs) {
                 ctx.channel().writeAndFlush(new TextWebSocketFrame(entry));
@@ -74,6 +92,29 @@ public class LogStreamWsHandler extends SimpleChannelInboundHandler<TextWebSocke
 
     public static int activeChannelCount() {
         return channels.size();
+    }
+
+    private boolean validateWsToken(String requestUri) {
+        try {
+            QueryStringDecoder qs = new QueryStringDecoder(requestUri);
+            List<String> tokenParams = qs.parameters().get("token");
+            if (tokenParams == null || tokenParams.isEmpty()) {
+                return false;
+            }
+            String token = tokenParams.get(0);
+            SignedJWT jwt = SignedJWT.parse(token);
+            com.nimbusds.jose.crypto.MACVerifier verifier =
+                    new com.nimbusds.jose.crypto.MACVerifier(
+                            uiProperties.getJwtSecretKey().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            if (!jwt.verify(verifier)) {
+                return false;
+            }
+            java.util.Date exp = jwt.getJWTClaimsSet().getExpirationTime();
+            return exp != null && exp.after(new java.util.Date());
+        } catch (Exception e) {
+            log.debug("WS token validation error: {}", e.getMessage());
+            return false;
+        }
     }
 
     public static class LogEntry {

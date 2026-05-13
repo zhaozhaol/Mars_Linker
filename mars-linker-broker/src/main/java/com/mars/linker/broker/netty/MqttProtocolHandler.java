@@ -22,6 +22,7 @@ import java.util.Set;
 import java.util.Collections;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.LongConsumer;
 import java.util.concurrent.TimeUnit;
@@ -33,8 +34,10 @@ import com.mars.linker.broker.netty.protocol.DeviceLifecyclePublisher;
 import com.mars.linker.broker.netty.protocol.PublishRouter;
 import com.mars.linker.broker.netty.protocol.QoS1OutboundService;
 import com.mars.linker.broker.netty.protocol.QoS2InboundService;
+import com.mars.linker.broker.netty.protocol.QoS2OutboundService;
 import com.mars.linker.broker.netty.protocol.SubscriptionRegistry;
 import com.mars.linker.broker.netty.protocol.TopicFilterSupport;
+import com.mars.linker.broker.netty.store.BoundedRetainStore;
 import com.mars.linker.broker.netty.store.FileRetainStore;
 import com.mars.linker.broker.netty.store.RetainStore;
 import com.mars.linker.broker.netty.store.SessionService;
@@ -79,39 +82,43 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
     private final int qos1RetransmitMaxAttempts;
     private final QoS1OutboundService qos1Outbound;
     private final QoS2InboundService qos2Inbound;
+    private final QoS2OutboundService qos2Outbound;
     private final DeviceLifecyclePublisher deviceLifecyclePublisher;
     private final int maxConnections;
     private final AclProvider aclProvider;
 
     // 指标：使用 LongAdder 作为轻量并发计数器，由 MqttBrokerMetricsBinder 暴露到 Micrometer。
-    private static final LongAdder METRIC_CONNECTIONS_ACTIVE = new LongAdder();
-    private static final LongAdder METRIC_CONNECT_ACCEPTED_TOTAL = new LongAdder();
-    private static final LongAdder METRIC_CONNECT_REJECTED_TOTAL = new LongAdder();
-    private static final LongAdder METRIC_PUBLISH_IN_TOTAL = new LongAdder();
-    private static final LongAdder METRIC_PUBLISH_OUT_TOTAL = new LongAdder();
-    private static final LongAdder METRIC_QOS2_IN_PENDING = new LongAdder();
-    private static final LongAdder METRIC_QOS2_IN_COMPLETED_TOTAL = new LongAdder();
-    private static final LongAdder METRIC_ACL_SUB_DENY_TOTAL = new LongAdder();
-    private static final LongAdder METRIC_ACL_PUB_DENY_TOTAL = new LongAdder();
+    private final LongAdder METRIC_CONNECTIONS_ACTIVE = new LongAdder();
+    private final LongAdder METRIC_CONNECT_ACCEPTED_TOTAL = new LongAdder();
+    private final LongAdder METRIC_CONNECT_REJECTED_TOTAL = new LongAdder();
+    private final LongAdder METRIC_PUBLISH_IN_TOTAL = new LongAdder();
+    private final LongAdder METRIC_PUBLISH_OUT_TOTAL = new LongAdder();
+    private final LongAdder METRIC_QOS2_IN_PENDING = new LongAdder();
+    private final LongAdder METRIC_QOS2_IN_COMPLETED_TOTAL = new LongAdder();
+    private final LongAdder METRIC_ACL_SUB_DENY_TOTAL = new LongAdder();
+    private final LongAdder METRIC_ACL_PUB_DENY_TOTAL = new LongAdder();
+
+    private static volatile MqttProtocolHandler INSTANCE;
 
     /** 本连接已订阅的主题集合（用于断线时从全局路由表摘除）。 */
     private static final AttributeKey<Set<String>> TOPIC_SUBSCRIPTIONS = AttributeKey.valueOf("mqtt_topic_subscriptions");
     /** 本连接对每个主题的<b>授予 QoS</b>（SUBACK 返回值），用于与发布端 QoS 取 min 后投递。 */
     private static final AttributeKey<ConcurrentHashMap<String, Integer>> SUBSCRIPTION_QOS =
             AttributeKey.valueOf("mqtt_subscription_qos");
-    /** 全局：订阅注册表（精确/通配符/$share + 轮询）。 */
-    private static final SubscriptionRegistry SUBSCRIPTION_REGISTRY = new SubscriptionRegistry();
-    /** 全局：连接 ID → Netty 上下文，用于向订阅者写回 PUBLISH。 */
-    private static final Map<ChannelId, ChannelHandlerContext> CHANNELS = new ConcurrentHashMap<>();
-    /** 全局：Session 管理（含离线队列与持久化）。 */
-    private static SessionService SESSION_SERVICE = SessionService.INSTANCE;
-    /** 全局：clientId → 当前活跃 channelId（用于踢掉旧连接与恢复订阅）。 */
-    private static final Map<String, ChannelId> CLIENT_TO_CHANNEL = new ConcurrentHashMap<>();
-    /** 全局：channelId → clientId（用于离线期间仍可把消息入队到 session）。 */
-    private static final Map<ChannelId, String> CHANNEL_TO_CLIENT = new ConcurrentHashMap<>();
-    /** 全局：Retain 消息最小持久化存储（默认文件版，可由配置切换）。 */
-    private static RetainStore RETAIN_STORE = new FileRetainStore(java.nio.file.Paths.get("data", "retain-store.tsv"));
-    // SessionService 在自身初始化时负责加载持久化会话。
+    /** 实例：订阅注册表（精确/通配符/$share + 轮询）。 */
+    private final SubscriptionRegistry SUBSCRIPTION_REGISTRY;
+    /** 实例：连接 ID → Netty 上下文，用于向订阅者写回 PUBLISH。 */
+    private final Map<ChannelId, ChannelHandlerContext> channels;
+    /** 实例：Session 管理（含离线队列与持久化）。 */
+    private final SessionService SESSION_SERVICE;
+    /** 实例：clientId → 当前活跃 channelId（用于踢掉旧连接与恢复订阅）。 */
+    private final Map<String, ChannelId> CLIENT_TO_CHANNEL;
+    /** 实例：channelId → clientId（用于离线期间仍可把消息入队到 session）。 */
+    private final Map<ChannelId, String> CHANNEL_TO_CLIENT;
+    /** 实例：Retain 消息持久化存储。 */
+    private final RetainStore RETAIN_STORE;
+    /** 实例：原子活跃连接计数，用于上限检查和指标同步。 */
+    private final AtomicInteger activeConnectionCount;
 
     public MqttProtocolHandler() {
         this(false, null, null, false, 5_000, 3, false, Collections.emptyList(), Collections.emptyList(),
@@ -201,7 +208,9 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                                int maxConnections,
                                int inboundQos2PendingMax) {
         this(authProvider, aclProvider, qos1RetransmitEnabled, qos1RetransmitIntervalMs, qos1RetransmitMaxAttempts,
-                maxConnections, inboundQos2PendingMax, SessionService.INSTANCE, RETAIN_STORE);
+                maxConnections, inboundQos2PendingMax,
+                SessionService.create(null, 5000, 604800000L),
+                new BoundedRetainStore(new FileRetainStore(java.nio.file.Paths.get("data", "retain-store.tsv")), 200000, 2592000000L));
     }
 
     public MqttProtocolHandler(AuthProvider authProvider,
@@ -211,14 +220,8 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                                int qos1RetransmitMaxAttempts,
                                int maxConnections,
                                int inboundQos2PendingMax,
-                               SessionService sessionService,
-                               RetainStore retainStore) {
-        if (sessionService != null) {
-            SESSION_SERVICE = sessionService;
-        }
-        if (retainStore != null) {
-            RETAIN_STORE = retainStore;
-        }
+                               SessionService SESSION_SERVICE,
+                               RetainStore RETAIN_STORE) {
         this.authProvider = authProvider == null ? new StaticAuthProvider(false, null, null) : authProvider;
         this.aclProvider = aclProvider == null
                 ? new PrefixAclProvider(false, Collections.emptyList(), Collections.emptyList(),
@@ -228,10 +231,24 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         this.qos1RetransmitIntervalMs = qos1RetransmitIntervalMs;
         this.qos1RetransmitMaxAttempts = qos1RetransmitMaxAttempts;
         this.maxConnections = maxConnections;
+        this.SUBSCRIPTION_REGISTRY = new SubscriptionRegistry();
+        this.channels = new ConcurrentHashMap<>();
+        this.SESSION_SERVICE = SESSION_SERVICE;
+        this.CLIENT_TO_CHANNEL = new ConcurrentHashMap<>();
+        this.CHANNEL_TO_CLIENT = new ConcurrentHashMap<>();
+        this.RETAIN_STORE = RETAIN_STORE;
+        this.activeConnectionCount = new AtomicInteger(0);
         this.qos1Outbound = new QoS1OutboundService(
                 qos1RetransmitEnabled,
                 qos1RetransmitIntervalMs,
                 qos1RetransmitMaxAttempts,
+                log
+        );
+        this.qos2Outbound = new QoS2OutboundService(
+                qos1RetransmitEnabled,
+                qos1RetransmitIntervalMs,
+                qos1RetransmitMaxAttempts,
+                qos1Outbound,
                 log
         );
         LongConsumer pendingDeltaRecorder = delta -> METRIC_QOS2_IN_PENDING.add(delta);
@@ -245,24 +262,33 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         this.deviceLifecyclePublisher = new DeviceLifecyclePublisher(
                 (topic, body) -> publishToSubscribers(topic, body, false, false, 1)
         );
+        INSTANCE = this;
     }
 
     @Override
     public void channelActive(ChannelHandlerContext ctx) throws Exception {
-        if (maxConnections > 0 && CHANNELS.size() >= maxConnections) {
-            log.warn("连接数达到上限，拒绝新连接 maxConnections={} remote={} channelId={}",
-                    maxConnections, ctx.channel().remoteAddress(), ctx.channel().id().asShortText());
-            ctx.close();
-            return;
+        if (maxConnections > 0) {
+            int current = activeConnectionCount.incrementAndGet();
+            if (current > maxConnections) {
+                activeConnectionCount.decrementAndGet();
+                log.warn("连接数达到上限，拒绝新连接 maxConnections={} current={} remote={} channelId={}",
+                        maxConnections, current - 1, ctx.channel().remoteAddress(), ctx.channel().id().asShortText());
+                METRIC_CONNECT_REJECTED_TOTAL.increment();
+                ctx.close();
+                return;
+            }
+        } else {
+            activeConnectionCount.incrementAndGet();
         }
         ClientSessionContext session = ClientSessionContext.of(ctx);
         // 尽早登记，便于 SUBSCRIBE 前管道其它事件也能关联（当前实现以读事件为主）。
-        CHANNELS.put(ctx.channel().id(), ctx);
+        channels.put(ctx.channel().id(), ctx);
         METRIC_CONNECTIONS_ACTIVE.increment();
         session.disconnectReceived(Boolean.FALSE);
         session.closeReason("connection_lost");
         session.lastPacketAtMs(System.currentTimeMillis());
         qos1Outbound.onChannelActive(ctx);
+        qos2Outbound.onChannelActive(ctx);
         log.info("MQTT TCP already remote={} channelId={}",
                 ctx.channel().remoteAddress(),
                 ctx.channel().id().asShortText());
@@ -278,8 +304,8 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, ByteBuf frame) {
         ClientSessionContext session = ClientSessionContext.of(ctx);
-        // EmbeddedChannel 等场景下 channelActive 顺序可能与真机略有差异，此处幂等登记，避免首包时 CHANNELS 未就绪。
-        CHANNELS.put(ctx.channel().id(), ctx);
+        // EmbeddedChannel 等场景下 channelActive 顺序可能与真机略有差异，此处幂等登记，避免首包时 channels 未就绪。
+        channels.put(ctx.channel().id(), ctx);
         session.lastPacketAtMs(System.currentTimeMillis());
         if (!frame.isReadable()) {
             closeWithReason(ctx, "empty frame");
@@ -321,6 +347,12 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                 break;
             case 4: // PUBACK
                 handlePubAck(ctx, frame, remainingLength);
+                break;
+            case 5: // PUBREC (QoS2下行)
+                handlePubRecDownstream(ctx, frame, remainingLength);
+                break;
+            case 7: // PUBCOMP (QoS2下行)
+                handlePubCompDownstream(ctx, frame, remainingLength);
                 break;
             case 6: // PUBREL
                 handlePubRel(ctx, flags, frame, remainingLength);
@@ -366,6 +398,13 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                     log.warn("Will 被 ACL 拒绝 topic={} channelId={}", willTopic, ctx.channel().id().asShortText());
                 } else {
                 int delivered = publishToSubscribers(willTopic, willPayload, willRetain, false, willQos);
+                if (willRetain) {
+                    try {
+                        RETAIN_STORE.put(willTopic, willPayload, willQos);
+                    } catch (Exception e) {
+                        log.warn("Will Retain 存储失败 topic={} error={}", willTopic, e.getMessage());
+                    }
+                }
                 log.info("Will 已发布 topic={} qos={} retain={} bytes={} -> 投递{}路 channelId={}",
                         willTopic, willQos, willRetain, willPayload.length, delivered, ctx.channel().id().asShortText());
                 }
@@ -387,11 +426,14 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                 CLIENT_TO_CHANNEL.remove(clientId);
             }
         }
-        CHANNELS.remove(ctx.channel().id());
-        METRIC_CONNECTIONS_ACTIVE.decrement();
+        if (channels.remove(ctx.channel().id()) != null) {
+            METRIC_CONNECTIONS_ACTIVE.decrement();
+            activeConnectionCount.decrementAndGet();
+        }
         CHANNEL_TO_CLIENT.remove(ctx.channel().id());
         qos2Inbound.onChannelInactive(ctx);
         qos1Outbound.onChannelInactive(ctx);
+        qos2Outbound.onChannelInactive(ctx);
         stopKeepAliveTask(ctx);
         super.channelInactive(ctx);
     }
@@ -534,7 +576,8 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
 
         ChannelId oldChannelId = CLIENT_TO_CHANNEL.put(clientId, ctx.channel().id());
         if (oldChannelId != null && !oldChannelId.equals(ctx.channel().id())) {
-            ChannelHandlerContext oldCtx = CHANNELS.get(oldChannelId);
+            CHANNEL_TO_CLIENT.remove(oldChannelId);
+            ChannelHandlerContext oldCtx = channels.get(oldChannelId);
             if (oldCtx != null && oldCtx.channel().isActive()) {
                 log.warn("clientId={} 已存在旧连接，关闭旧连接 oldChannelId={} newChannelId={}",
                         clientId, oldChannelId.asShortText(), ctx.channel().id().asShortText());
@@ -544,14 +587,18 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         }
 
         SessionService.Session persistedSession = SESSION_SERVICE.getOrCreate(clientId);
+        boolean sessionPresent = !cleanSession && SESSION_SERVICE.get(clientId) != null
+                && !persistedSession.subscriptionsQos.isEmpty();
         if (cleanSession) {
             persistedSession.subscriptionsQos.clear();
             persistedSession.offlineQueue.clear();
             SESSION_SERVICE.persist(clientId);
         } else {
-            // 恢复订阅（把 session 里存的订阅重新挂回当前 channel）
             for (Map.Entry<String, Integer> e : persistedSession.subscriptionsQos.entrySet()) {
                 addSubscription(ctx.channel().id(), e.getKey(), e.getValue() == null ? 0 : e.getValue());
+            }
+            if (!persistedSession.subscriptionsQos.isEmpty()) {
+                sessionPresent = true;
             }
         }
 
@@ -563,18 +610,17 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         session.connected(Boolean.TRUE);
         ByteBuf connAck;
         if (protocolLevel == 0x05) {
-            // MQTT 5 CONNACK: ack flags + reason code + properties length(0)
             connAck = Unpooled.buffer(5)
                     .writeByte(0x20)
                     .writeByte(0x03)
-                    .writeByte(0x00)
+                    .writeByte(sessionPresent ? 0x01 : 0x00)
                     .writeByte(0x00)
                     .writeByte(0x00);
         } else {
             connAck = Unpooled.buffer(4)
                     .writeByte(0x20)
                     .writeByte(0x02)
-                    .writeByte(0x00)
+                    .writeByte(sessionPresent ? 0x01 : 0x00)
                     .writeByte(0x00);
         }
         ctx.writeAndFlush(connAck);
@@ -669,7 +715,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                     : TopicFilterSupport.isValidTopicFilter(topicFilter);
 
             if (requestedQos <= 2 && valid && aclAllowsSubscribe(topicFilter)) {
-                int grantedQos = Math.min(requestedQos, 1);
+                int grantedQos = requestedQos;
                 addSubscription(ctx.channel().id(), topicFilter, grantedQos);
                 returnCodes.add(grantedQos);
                 acceptedFilters.add(topicFilter);
@@ -832,6 +878,26 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         log.debug("PUBACK packetId={} channelId={}", packetId, ctx.channel().id().asShortText());
     }
 
+    private void handlePubRecDownstream(ChannelHandlerContext ctx, ByteBuf payload, int remainingLength) {
+        if (remainingLength < 2 || !payload.isReadable(2)) {
+            closeWithReason(ctx, "PUBREC 长度非法");
+            return;
+        }
+        int packetId = payload.readUnsignedShort();
+        qos2Outbound.onPubRec(ctx, packetId);
+        log.debug("PUBREC(下行) packetId={} channelId={}", packetId, ctx.channel().id().asShortText());
+    }
+
+    private void handlePubCompDownstream(ChannelHandlerContext ctx, ByteBuf payload, int remainingLength) {
+        if (remainingLength != 2 || !payload.isReadable(2)) {
+            closeWithReason(ctx, "PUBCOMP 长度非法");
+            return;
+        }
+        int packetId = payload.readUnsignedShort();
+        qos2Outbound.onPubComp(ctx, packetId);
+        log.debug("PUBCOMP(下行) packetId={} channelId={}", packetId, ctx.channel().id().asShortText());
+    }
+
     private void handlePubRel(ChannelHandlerContext ctx, int flags, ByteBuf payload, int remainingLength) {
         if (flags != 0x02 || remainingLength != 2 || !payload.isReadable(2)) {
             closeWithReason(ctx, "PUBREL 固定头或长度非法");
@@ -914,12 +980,13 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                 dup,
                 pubQos,
                 SUBSCRIPTION_REGISTRY,
-                CHANNELS,
+                channels,
                 SESSION_SERVICE,
                 CLIENT_TO_CHANNEL,
-                MqttProtocolHandler::qosForSubscription,
+                this::qosForSubscription,
                 qos1Outbound::nextPacketId,
                 qos1Outbound::track,
+                qos2Outbound::publishQos2,
                 log
         );
     }
@@ -940,8 +1007,8 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         return allowed;
     }
 
-    private static int qosForSubscription(ChannelId subscriberId, String topicOrFilter) {
-        ChannelHandlerContext c = CHANNELS.get(subscriberId);
+    private int qosForSubscription(ChannelId subscriberId, String topicOrFilter) {
+        ChannelHandlerContext c = channels.get(subscriberId);
         if (c == null) {
             return 0;
         }
@@ -1033,7 +1100,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         }
     }
 
-    private static void processRetainStore(String topic, byte[] payload, int qos, boolean retain) {
+    private void processRetainStore(String topic, byte[] payload, int qos, boolean retain) {
         if (!retain) {
             return;
         }
@@ -1047,9 +1114,10 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
     /**
      * 测试辅助：清空内存态路由/会话状态，并删除落盘文件。
      */
-    static synchronized void resetStateForTests() {
+    synchronized void resetStateForTests() {
         SUBSCRIPTION_REGISTRY.clear();
-        CHANNELS.clear();
+        channels.clear();
+        activeConnectionCount.set(0);
         SESSION_SERVICE.resetForTests();
         CLIENT_TO_CHANNEL.clear();
         CHANNEL_TO_CLIENT.clear();
@@ -1061,64 +1129,97 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         resetMetricsForTests();
     }
 
-    static synchronized void reloadSessionsForTests() {
+    synchronized void reloadSessionsForTests() {
         SESSION_SERVICE.reloadForTests();
     }
 
     static synchronized void resetMetricsForTests() {
-        METRIC_CONNECTIONS_ACTIVE.reset();
-        METRIC_CONNECT_ACCEPTED_TOTAL.reset();
-        METRIC_CONNECT_REJECTED_TOTAL.reset();
-        METRIC_PUBLISH_IN_TOTAL.reset();
-        METRIC_PUBLISH_OUT_TOTAL.reset();
-        METRIC_QOS2_IN_PENDING.reset();
-        METRIC_QOS2_IN_COMPLETED_TOTAL.reset();
-        METRIC_ACL_SUB_DENY_TOTAL.reset();
-        METRIC_ACL_PUB_DENY_TOTAL.reset();
+        MqttProtocolHandler inst = INSTANCE;
+        if (inst == null) return;
+        inst.METRIC_CONNECTIONS_ACTIVE.reset();
+        inst.METRIC_CONNECT_ACCEPTED_TOTAL.reset();
+        inst.METRIC_CONNECT_REJECTED_TOTAL.reset();
+        inst.METRIC_PUBLISH_IN_TOTAL.reset();
+        inst.METRIC_PUBLISH_OUT_TOTAL.reset();
+        inst.METRIC_QOS2_IN_PENDING.reset();
+        inst.METRIC_QOS2_IN_COMPLETED_TOTAL.reset();
+        inst.METRIC_ACL_SUB_DENY_TOTAL.reset();
+        inst.METRIC_ACL_PUB_DENY_TOTAL.reset();
     }
 
     public static long metricConnectionsActive() {
-        return METRIC_CONNECTIONS_ACTIVE.sum();
+        MqttProtocolHandler inst = INSTANCE;
+        return inst != null ? inst.METRIC_CONNECTIONS_ACTIVE.sum() : 0;
     }
 
     public static long metricConnectAcceptedTotal() {
-        return METRIC_CONNECT_ACCEPTED_TOTAL.sum();
+        MqttProtocolHandler inst = INSTANCE;
+        return inst != null ? inst.METRIC_CONNECT_ACCEPTED_TOTAL.sum() : 0;
     }
 
     public static long metricConnectRejectedTotal() {
-        return METRIC_CONNECT_REJECTED_TOTAL.sum();
+        MqttProtocolHandler inst = INSTANCE;
+        return inst != null ? inst.METRIC_CONNECT_REJECTED_TOTAL.sum() : 0;
     }
 
     public static long metricPublishInTotal() {
-        return METRIC_PUBLISH_IN_TOTAL.sum();
+        MqttProtocolHandler inst = INSTANCE;
+        return inst != null ? inst.METRIC_PUBLISH_IN_TOTAL.sum() : 0;
     }
 
     public static long metricPublishOutTotal() {
-        return METRIC_PUBLISH_OUT_TOTAL.sum();
+        MqttProtocolHandler inst = INSTANCE;
+        return inst != null ? inst.METRIC_PUBLISH_OUT_TOTAL.sum() : 0;
     }
 
     public static long metricQos2InPending() {
-        return METRIC_QOS2_IN_PENDING.sum();
+        MqttProtocolHandler inst = INSTANCE;
+        return inst != null ? inst.METRIC_QOS2_IN_PENDING.sum() : 0;
     }
 
     public static long metricQos2InCompletedTotal() {
-        return METRIC_QOS2_IN_COMPLETED_TOTAL.sum();
+        MqttProtocolHandler inst = INSTANCE;
+        return inst != null ? inst.METRIC_QOS2_IN_COMPLETED_TOTAL.sum() : 0;
     }
 
     public static long metricAclSubscribeDenyTotal() {
-        return METRIC_ACL_SUB_DENY_TOTAL.sum();
+        MqttProtocolHandler inst = INSTANCE;
+        return inst != null ? inst.METRIC_ACL_SUB_DENY_TOTAL.sum() : 0;
     }
 
     public static long metricAclPublishDenyTotal() {
-        return METRIC_ACL_PUB_DENY_TOTAL.sum();
+        MqttProtocolHandler inst = INSTANCE;
+        return inst != null ? inst.METRIC_ACL_PUB_DENY_TOTAL.sum() : 0;
     }
 
-    public static SubscriptionRegistry subscriptionRegistry() {
+    public SubscriptionRegistry subscriptionRegistry() {
         return SUBSCRIPTION_REGISTRY;
     }
 
-    public static Map<ChannelId, ChannelHandlerContext> channels() { return CHANNELS; }
-    public static Map<String, ChannelId> clientToChannel() { return CLIENT_TO_CHANNEL; }
+    public SessionService sessionService() {
+        return SESSION_SERVICE;
+    }
+
+    public RetainStore retainStore() {
+        return RETAIN_STORE;
+    }
+
+    public Map<ChannelId, ChannelHandlerContext> channels() { return channels; }
+    public Map<String, ChannelId> clientToChannel() { return CLIENT_TO_CHANNEL; }
+
+    public boolean disconnectClient(String clientId, String reason) {
+        ChannelId channelId = CLIENT_TO_CHANNEL.get(clientId);
+        if (channelId == null) {
+            return false;
+        }
+        ChannelHandlerContext ctx = channels.get(channelId);
+        if (ctx == null || !ctx.channel().isActive()) {
+            return false;
+        }
+        ClientSessionContext.of(ctx).closeReason(reason != null ? reason : "kicked_by_admin");
+        ctx.close();
+        return true;
+    }
 
     private void replayRetainedMessages(ChannelHandlerContext ctx, String topicFilter) {
         String normalizedFilter = topicFilter;
@@ -1169,7 +1270,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
 
     private void addSubscription(ChannelId channelId, String topicFilter, int grantedQos) {
         SUBSCRIPTION_REGISTRY.add(channelId, topicFilter);
-        ChannelHandlerContext c = CHANNELS.get(channelId);
+        ChannelHandlerContext c = channels.get(channelId);
         if (c == null) {
             log.warn("addSubscription 时找不到 ChannelHandlerContext channelId={}", channelId.asShortText());
             return;
@@ -1200,7 +1301,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
      * @return 若确实移除了订阅则为 true，否则为 false（幂等）
      */
     private boolean removeSubscription(ChannelId channelId, String topicFilter) {
-        ChannelHandlerContext channelCtx = CHANNELS.get(channelId);
+        ChannelHandlerContext channelCtx = channels.get(channelId);
         if (channelCtx == null) {
             return false;
         }
@@ -1230,7 +1331,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
     }
 
     private void removeAllSubscriptions(ChannelId channelId) {
-        ChannelHandlerContext channelCtx = CHANNELS.get(channelId);
+        ChannelHandlerContext channelCtx = channels.get(channelId);
         if (channelCtx == null) {
             return;
         }

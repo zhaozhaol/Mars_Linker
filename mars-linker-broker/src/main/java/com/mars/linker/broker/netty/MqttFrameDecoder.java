@@ -66,6 +66,12 @@ public class MqttFrameDecoder extends ByteToMessageDecoder {
                 in.readerIndex(mark);
                 return;
             }
+            if (rlDigits >= 4) {
+                in.readerIndex(mark);
+                log.warn("MQTT Remaining Length 超过 4 字节，关闭连接 remote={}", ctx.channel().remoteAddress());
+                ctx.close();
+                return;
+            }
             int digit = in.readUnsignedByte();
             rlDigits++;
             remainingLength += (long) (digit & 0x7F) * multiplier;
@@ -79,18 +85,6 @@ public class MqttFrameDecoder extends ByteToMessageDecoder {
                 break;
             }
             multiplier <<= 7;
-            if (multiplier > 128 * 128 * 128) {
-                in.readerIndex(mark);
-                log.warn("MQTT Remaining Length 编码非法(multiplier)，关闭连接 remote={}", ctx.channel().remoteAddress());
-                ctx.close();
-                return;
-            }
-            if (rlDigits > 4) {
-                in.readerIndex(mark);
-                log.warn("MQTT Remaining Length 超过 4 字节，关闭连接 remote={}", ctx.channel().remoteAddress());
-                ctx.close();
-                return;
-            }
         }
 
         int headerSize = in.readerIndex() - mark;

@@ -3,7 +3,7 @@ spring:
     name: mars-linker-broker
 
 server:
-  port: 8080
+  port: 11884
 
 management:
   endpoints:
@@ -24,6 +24,11 @@ mars:
       worker-threads: 0
       max-packet-bytes: 262144
       so-backlog: 1024
+      # --- 鉴权配置 ---
+      auth-enabled: true          # 开启鉴权（默认关闭）
+      auth-username: zytxmq  # 账号
+      auth-password: mq1890Q*86Y&n  # 密码
+      auth-mode: static           # static(本地) 或 http(远程鉴权)
       # --- 存储模式配置 ---
       storage-enabled: true              # 持久化总开关：false 时仅内存运行
       storage-mode: file                 # file(默认) / redis / db（仅 storage-enabled=true 生效）
@@ -68,6 +73,8 @@ mars:
       max-api-queries-per-second: 30
       max-push-connections: 50
       persist-mode: memory
+      admin-username: admin
+      admin-password: admin123
 
 logging:
   level:

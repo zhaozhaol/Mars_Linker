@@ -17,6 +17,7 @@
         <circle v-if="lastPoint" :cx="lastPoint.x" :cy="lastPoint.y" r="3" :fill="lineColor" />
       </svg>
       <div v-if="!points.length" class="no-data">暂无数据</div>
+      <div v-if="sampleRate != null && sampleRate < 1" class="sample-watermark">采样率: {{ (sampleRate * 100).toFixed(0) }}%</div>
     </div>
   </div>
 </template>
@@ -31,10 +32,12 @@ const props = withDefaults(defineProps<{
   color?: 'blue' | 'green' | 'purple' | 'red'
   width?: number
   height?: number
+  sampleRate?: number | null
 }>(), {
   color: 'blue',
   width: 400,
-  height: 120
+  height: 120,
+  sampleRate: null
 })
 
 const id = computed(() => props.title.replace(/\s/g, '-'))
@@ -112,4 +115,5 @@ const lastPoint = computed(() => chartData.value.lastPoint)
 .chart-body { position: relative; flex: 1; min-height: 0; }
 .chart-svg { width: 100%; height: 100%; display: block; }
 .no-data { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 12px; color: rgba(255,255,255,0.2); }
+.sample-watermark { position: absolute; bottom: 4px; right: 8px; font-size: 10px; color: rgba(255,255,255,0.25); font-weight: 600; }
 </style>

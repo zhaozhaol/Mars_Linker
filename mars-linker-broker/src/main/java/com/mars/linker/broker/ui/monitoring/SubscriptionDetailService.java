@@ -20,10 +20,15 @@ import java.util.concurrent.CopyOnWriteArraySet;
 public class SubscriptionDetailService {
 
     private static final int PAGINATION_THRESHOLD = 10000;
+    private final MqttProtocolHandler protocolHandler;
+
+    public SubscriptionDetailService(MqttProtocolHandler protocolHandler) {
+        this.protocolHandler = protocolHandler;
+    }
 
     public PagedResult<SubscriptionTopicInfo> listTopics(int page, int size) {
         return MonitoringFaultBoundary.executeWithResult(() -> {
-            SubscriptionRegistry registry = MqttProtocolHandler.subscriptionRegistry();
+            SubscriptionRegistry registry = protocolHandler.subscriptionRegistry();
             List<SubscriptionTopicInfo> all = new ArrayList<>();
 
             all.addAll(collectFromMap(registry.exactTopicSubscribers(), "exact"));
@@ -42,13 +47,13 @@ public class SubscriptionDetailService {
 
     public List<SubscriberDetail> listSubscribers(String topicFilter) {
         return MonitoringFaultBoundary.executeWithResult(() -> {
-            SubscriptionRegistry registry = MqttProtocolHandler.subscriptionRegistry();
+            SubscriptionRegistry registry = protocolHandler.subscriptionRegistry();
             Set<ChannelId> channelIds = findChannelIds(registry, topicFilter);
             if (channelIds == null || channelIds.isEmpty()) {
                 return Collections.emptyList();
             }
 
-            Map<ChannelId, ChannelHandlerContext> channels = MqttProtocolHandler.channels();
+            Map<ChannelId, ChannelHandlerContext> channels = protocolHandler.channels();
             AttributeKey<ConcurrentHashMap<String, Integer>> qosKey =
                     AttributeKey.valueOf("mqtt_subscription_qos");
 
@@ -64,13 +69,13 @@ public class SubscriptionDetailService {
 
     public ClientSubscriptionInfo listClientSubscriptions(String clientId) {
         return MonitoringFaultBoundary.executeWithResult(() -> {
-            Map<String, ChannelId> clientToChannel = MqttProtocolHandler.clientToChannel();
+            Map<String, ChannelId> clientToChannel = protocolHandler.clientToChannel();
             ChannelId channelId = clientToChannel.get(clientId);
             if (channelId == null) {
                 return new ClientSubscriptionInfo(clientId, Collections.emptyList());
             }
 
-            Map<ChannelId, ChannelHandlerContext> channels = MqttProtocolHandler.channels();
+            Map<ChannelId, ChannelHandlerContext> channels = protocolHandler.channels();
             ChannelHandlerContext ctx = channels.get(channelId);
             if (ctx == null) {
                 return new ClientSubscriptionInfo(clientId, Collections.emptyList());

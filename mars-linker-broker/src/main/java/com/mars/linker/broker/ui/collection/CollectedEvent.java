@@ -1,14 +1,13 @@
 package com.mars.linker.broker.ui.collection;
 
-/**
- * UI 数据采集事件。
- */
 public class CollectedEvent {
 
     private final long timestamp;
     private final String type;
     private final String source;
     private final String payload;
+    private String status = "pending";
+    private Long processedAt;
 
     public CollectedEvent(long timestamp, String type, String source, String payload) {
         this.timestamp = timestamp;
@@ -31,5 +30,26 @@ public class CollectedEvent {
 
     public String getPayload() {
         return payload;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
+    }
+
+    public Long getProcessedAt() {
+        return processedAt;
+    }
+
+    public void setProcessedAt(Long processedAt) {
+        this.processedAt = processedAt;
+    }
+
+    public void markProcessed(String newStatus) {
+        this.status = newStatus;
+        this.processedAt = System.currentTimeMillis();
     }
 }

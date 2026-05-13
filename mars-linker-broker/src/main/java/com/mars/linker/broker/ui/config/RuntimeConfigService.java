@@ -1,7 +1,11 @@
 package com.mars.linker.broker.ui.config;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
@@ -12,6 +16,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @Service
 public class RuntimeConfigService {
+
+    private static final Logger auditLog = LoggerFactory.getLogger("AUDIT");
 
     private static final Set<String> STATIC_FIELDS = Set.of(
             "enabled", "tcpPort", "storageMode", "persistMode",
@@ -32,6 +38,8 @@ public class RuntimeConfigService {
     private final AtomicReference<Double> subscriptionSampleRate;
     private final AtomicReference<Double> systemSampleRate;
     private final AtomicLong aggregationWindowMs;
+    private final Deque<Map<String, Object>> configHistory = new ArrayDeque<>();
+    private static final int MAX_HISTORY = 10;
 
     public RuntimeConfigService(MarsLinkerUiProperties uiProperties) {
         this.uiProperties = uiProperties;
@@ -76,6 +84,34 @@ public class RuntimeConfigService {
                 throw new IllegalArgumentException("Cannot modify static config field: " + key);
             }
         }
+        synchronized (configHistory) {
+            Map<String, Object> before = snapshot();
+            applyUpdates(updates);
+            Map<String, Object> after = snapshot();
+            if (!before.equals(after)) {
+                configHistory.push(before);
+                while (configHistory.size() > MAX_HISTORY) {
+                    configHistory.removeLast();
+                }
+            }
+        }
+        auditLog.info("RuntimeConfig updated: keys={}", updates.keySet());
+        return snapshot();
+    }
+
+    public Map<String, Object> rollback() {
+        synchronized (configHistory) {
+            if (configHistory.isEmpty()) {
+                throw new IllegalStateException("No config history available for rollback");
+            }
+            Map<String, Object> previous = configHistory.pop();
+            applyUpdates(previous);
+            auditLog.info("RuntimeConfig rolled back to: {}", previous.keySet());
+        }
+        return snapshot();
+    }
+
+    private void applyUpdates(Map<String, Object> updates) {
         Object mode = updates.get("collectMode");
         if (mode instanceof String) {
             String trimmed = ((String) mode).trim();
@@ -115,7 +151,6 @@ public class RuntimeConfigService {
             long value = ((Number) aggWindow).longValue();
             if (value > 0) aggregationWindowMs.set(value);
         }
-        return snapshot();
     }
 
     public boolean isAlertEvaluationEnabled() {

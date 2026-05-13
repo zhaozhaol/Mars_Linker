@@ -1,5 +1,11 @@
 package com.mars.linker.broker.ui.auth;
 
+import com.mars.linker.broker.ui.config.MarsLinkerUiProperties;
+import com.nimbusds.jose.JWSObject;
+import com.nimbusds.jose.crypto.MACVerifier;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.SignedJWT;
+
 import javax.servlet.FilterChain;
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
@@ -12,7 +18,9 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.Base64;
+import java.text.ParseException;
+import java.util.Date;
+import java.util.List;
 import java.util.Set;
 
 @Component
@@ -24,12 +32,24 @@ public class UiAuthFilter extends OncePerRequestFilter {
     private static final String ROLE_UI_MANAGE = "ROLE_UI_MANAGE";
     private static final Set<String> READ_METHODS = Set.of("GET", "HEAD", "OPTIONS");
 
+    private final MarsLinkerUiProperties uiProperties;
+    private final byte[] secretKeyBytes;
+
+    public UiAuthFilter(MarsLinkerUiProperties uiProperties) {
+        this.uiProperties = uiProperties;
+        this.secretKeyBytes = uiProperties.getJwtSecretKey().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
         String path = request.getRequestURI();
         if (!path.startsWith("/api/ui/")) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+        if (path.startsWith("/api/ui/auth/")) {
             filterChain.doFilter(request, response);
             return;
         }
@@ -48,7 +68,7 @@ public class UiAuthFilter extends OncePerRequestFilter {
 
         TokenInfo tokenInfo = parseToken(token);
         if (tokenInfo == null) {
-            sendError(response, HttpStatus.UNAUTHORIZED, "Invalid token");
+            sendError(response, HttpStatus.UNAUTHORIZED, "Invalid or expired token");
             return;
         }
 
@@ -70,12 +90,25 @@ public class UiAuthFilter extends OncePerRequestFilter {
 
     private TokenInfo parseToken(String token) {
         try {
-            String[] parts = token.split("\\.");
-            if (parts.length < 2) return null;
-            String payload = new String(Base64.getUrlDecoder().decode(parts[1]));
-            return TokenInfo.fromPayload(payload);
+            SignedJWT signedJWT = SignedJWT.parse(token);
+            MACVerifier verifier = new MACVerifier(secretKeyBytes);
+            if (!signedJWT.verify(verifier)) {
+                log.debug("JWT signature verification failed");
+                return null;
+            }
+            JWTClaimsSet claims = signedJWT.getJWTClaimsSet();
+            Date expirationTime = claims.getExpirationTime();
+            if (expirationTime != null && expirationTime.before(new Date())) {
+                log.debug("JWT token expired at {}", expirationTime);
+                return null;
+            }
+            List<String> roles = claims.getStringListClaim("roles");
+            if (roles == null || roles.isEmpty()) {
+                roles = List.of(ROLE_UI_VIEW);
+            }
+            return new TokenInfo(Set.copyOf(roles));
         } catch (Exception e) {
-            log.debug("Token parse error: {}", e.getMessage());
+            log.debug("Token parse/verify error: {}", e.getMessage());
             return null;
         }
     }
@@ -91,14 +124,6 @@ public class UiAuthFilter extends OncePerRequestFilter {
 
         TokenInfo(Set<String> roles) {
             this.roles = roles;
-        }
-
-        static TokenInfo fromPayload(String payload) {
-            Set<String> roles = new java.util.HashSet<>();
-            if (payload.contains("ROLE_UI_VIEW")) roles.add(ROLE_UI_VIEW);
-            if (payload.contains("ROLE_UI_MANAGE")) roles.add(ROLE_UI_MANAGE);
-            if (roles.isEmpty()) roles.add(ROLE_UI_VIEW);
-            return new TokenInfo(roles);
         }
     }
 }

@@ -11,23 +11,41 @@ export function usePolling(options: UsePollingOptions) {
   const { callback, maxFailures = 3 } = options
   const isPaused = ref(false)
   const failureCount = ref(0)
-  let timerId: ReturnType<typeof setInterval> | null = null
+  let timerId: ReturnType<typeof setTimeout> | null = null
+
+  const BACKOFF_STEPS = [5000, 10000, 30000, 60000]
 
   const getInterval = () => {
     const val = typeof options.interval === 'number' ? options.interval : options.interval.value
     return Math.max(1000, val)
   }
 
+  const getBackoffDelay = () => {
+    if (failureCount.value === 0) return getInterval()
+    const idx = Math.min(failureCount.value - 1, BACKOFF_STEPS.length - 1)
+    return BACKOFF_STEPS[idx]
+  }
+
   const execute = async () => {
     try {
       await callback()
       failureCount.value = 0
+      scheduleNext(getInterval())
     } catch {
       failureCount.value++
       if (failureCount.value >= maxFailures) {
         pause()
+      } else {
+        scheduleNext(getBackoffDelay())
       }
     }
+  }
+
+  const scheduleNext = (delay: number) => {
+    if (timerId !== null) {
+      clearTimeout(timerId)
+    }
+    timerId = setTimeout(execute, delay)
   }
 
   const start = () => {
@@ -35,12 +53,11 @@ export function usePolling(options: UsePollingOptions) {
     isPaused.value = false
     failureCount.value = 0
     execute()
-    timerId = setInterval(execute, getInterval())
   }
 
   const stop = () => {
     if (timerId !== null) {
-      clearInterval(timerId)
+      clearTimeout(timerId)
       timerId = null
     }
   }
@@ -57,8 +74,7 @@ export function usePolling(options: UsePollingOptions) {
   if (typeof options.interval !== 'number') {
     watch(options.interval, () => {
       if (!isPaused.value && timerId !== null) {
-        stop()
-        timerId = setInterval(execute, getInterval())
+        scheduleNext(getInterval())
       }
     })
   }

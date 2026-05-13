@@ -1,5 +1,6 @@
 package com.mars.linker.broker.ui.logstream;
 
+import com.mars.linker.broker.ui.config.MarsLinkerUiProperties;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
@@ -33,9 +34,12 @@ public class LogStreamServer implements SmartLifecycle {
     private EventLoopGroup workerGroup;
 
     private final int port;
+    private final MarsLinkerUiProperties uiProperties;
 
-    public LogStreamServer(@Value("${mars.linker.ui.log-ws-port:8081}") int port) {
+    public LogStreamServer(@Value("${mars.linker.ui.log-ws-port:8081}") int port,
+                           MarsLinkerUiProperties uiProperties) {
         this.port = port;
+        this.uiProperties = uiProperties;
     }
 
     @Override
@@ -57,7 +61,7 @@ public class LogStreamServer implements SmartLifecycle {
                                 .addLast("http-codec", new HttpServerCodec())
                                 .addLast("http-aggregator", new HttpObjectAggregator(65536))
                                 .addLast("ws-protocol", new WebSocketServerProtocolHandler("/api/ui/logs/stream", null, true))
-                                .addLast("ws-handler", new LogStreamWsHandler());
+                                .addLast("ws-handler", new LogStreamWsHandler(uiProperties));
                     }
                 });
 
