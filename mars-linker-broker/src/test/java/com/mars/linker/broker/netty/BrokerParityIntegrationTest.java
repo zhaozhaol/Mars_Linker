@@ -22,51 +22,51 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * P0 对拍：比较 EMQX 与 Nexus 在核心语义上的一致性（最小可运行版）。
+ * P0 对拍：比较 EMQX 与 Mars 在核心语义上的一致性（最小可运行版）。
  * <p>
  * 运行示例：
- * mvn -pl nexus-mqtt-broker -Dtest=BrokerParityIntegrationTest test
+ * mvn -pl mars-linker-broker -Dtest=BrokerParityIntegrationTest test
  * -Demqx.broker=tcp://127.0.0.1:1883
- * -Dnexus.broker=tcp://127.0.0.1:11883
+ * -Dmars.broker=tcp://127.0.0.1:11883
  * </p>
  */
 class BrokerParityIntegrationTest {
 
     private static final String EMQX_BROKER = System.getProperty("emqx.broker", "tcp://127.0.0.1:1883");
-    private static final String NEXUS_BROKER = System.getProperty("nexus.broker", "tcp://127.0.0.1:11883");
+    private static final String MARS_BROKER = System.getProperty("mars.broker", "tcp://127.0.0.1:11883");
     private static final int TIMEOUT_SECONDS = 5;
 
     @Test
     void should_match_basic_pubsub_behavior() throws Exception {
         boolean emqxReachable = canConnect(EMQX_BROKER);
-        boolean nexusReachable = canConnect(NEXUS_BROKER);
-        Assumptions.assumeTrue(emqxReachable && nexusReachable,
-                "Both brokers must be reachable for parity test. emqx=" + emqxReachable + ", nexus=" + nexusReachable);
+        boolean marsReachable = canConnect(MARS_BROKER);
+        Assumptions.assumeTrue(emqxReachable && marsReachable,
+                "Both brokers must be reachable for parity test. emqx=" + emqxReachable + ", mars=" + marsReachable);
 
         ScenarioResult emqx = runBasicPubSubScenario(EMQX_BROKER);
-        ScenarioResult nexus = runBasicPubSubScenario(NEXUS_BROKER);
+        ScenarioResult mars = runBasicPubSubScenario(MARS_BROKER);
 
         assertTrue(emqx.success, "EMQX basic scenario failed: " + emqx.errorMessage);
-        assertTrue(nexus.success, "Nexus basic scenario failed: " + nexus.errorMessage);
-        assertEquals(emqx.receivedPayload, nexus.receivedPayload, "Payload parity mismatch");
+        assertTrue(mars.success, "Mars basic scenario failed: " + mars.errorMessage);
+        assertEquals(emqx.receivedPayload, mars.receivedPayload, "Payload parity mismatch");
         assertNotNull(emqx.receivedPayload, "EMQX should receive payload");
-        assertNotNull(nexus.receivedPayload, "Nexus should receive payload");
+        assertNotNull(mars.receivedPayload, "Mars should receive payload");
     }
 
     @Test
     void should_match_share_subscription_single_delivery_behavior() throws Exception {
         boolean emqxReachable = canConnect(EMQX_BROKER);
-        boolean nexusReachable = canConnect(NEXUS_BROKER);
-        Assumptions.assumeTrue(emqxReachable && nexusReachable,
-                "Both brokers must be reachable for parity test. emqx=" + emqxReachable + ", nexus=" + nexusReachable);
+        boolean marsReachable = canConnect(MARS_BROKER);
+        Assumptions.assumeTrue(emqxReachable && marsReachable,
+                "Both brokers must be reachable for parity test. emqx=" + emqxReachable + ", mars=" + marsReachable);
 
         ScenarioResult emqx = runShareSubscriptionScenario(EMQX_BROKER);
-        ScenarioResult nexus = runShareSubscriptionScenario(NEXUS_BROKER);
+        ScenarioResult mars = runShareSubscriptionScenario(MARS_BROKER);
 
         assertTrue(emqx.success, "EMQX share scenario failed: " + emqx.errorMessage);
-        assertTrue(nexus.success, "Nexus share scenario failed: " + nexus.errorMessage);
+        assertTrue(mars.success, "Mars share scenario failed: " + mars.errorMessage);
         assertEquals(1, emqx.shareReceiveCount, "EMQX should deliver exactly once in share group");
-        assertEquals(1, nexus.shareReceiveCount, "Nexus should deliver exactly once in share group");
+        assertEquals(1, mars.shareReceiveCount, "Mars should deliver exactly once in share group");
     }
 
     private static ScenarioResult runBasicPubSubScenario(String broker) {

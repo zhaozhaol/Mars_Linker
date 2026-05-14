@@ -7,7 +7,7 @@ import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
- * NexusMQ Broker 应用启动入口。
+ * MarsLinker Broker 应用启动入口。
  * <p>
  * 进程内同时承载两类能力：
  * </p>

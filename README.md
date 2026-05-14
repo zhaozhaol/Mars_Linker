@@ -636,15 +636,15 @@ mars:
 
 | 指标名 | 类型 | 说明 |
 |--------|------|------|
-| `nexus_mqtt_connections_active` | Gauge | 活跃连接数 |
-| `nexus_mqtt_connect_accepted_total` | Counter | 总接受连接数 |
-| `nexus_mqtt_connect_rejected_total` | Counter | 总拒绝连接数 |
-| `nexus_mqtt_publish_in_total` | Counter | 总入站 PUBLISH 数 |
-| `nexus_mqtt_publish_out_total` | Counter | 总下行投递数 |
-| `nexus_mqtt_qos2_in_pending` | Gauge | 当前 QoS2 pending 数 |
-| `nexus_mqtt_qos2_in_completed_total` | Counter | QoS2 完成总数 |
-| `nexus_mqtt_acl_subscribe_deny_total` | Counter | ACL 拒绝订阅总数 |
-| `nexus_mqtt_acl_publish_deny_total` | Counter | ACL 拒绝发布总数 |
+| `mars_mqtt_connections_active` | Gauge | 活跃连接数 |
+| `mars_mqtt_connect_accepted_total` | Counter | 总接受连接数 |
+| `mars_mqtt_connect_rejected_total` | Counter | 总拒绝连接数 |
+| `mars_mqtt_publish_in_total` | Counter | 总入站 PUBLISH 数 |
+| `mars_mqtt_publish_out_total` | Counter | 总下行投递数 |
+| `mars_mqtt_qos2_in_pending` | Gauge | 当前 QoS2 pending 数 |
+| `mars_mqtt_qos2_in_completed_total` | Counter | QoS2 完成总数 |
+| `mars_mqtt_acl_subscribe_deny_total` | Counter | ACL 拒绝订阅总数 |
+| `mars_mqtt_acl_publish_deny_total` | Counter | ACL 拒绝发布总数 |
 
 ### 监控推送
 
