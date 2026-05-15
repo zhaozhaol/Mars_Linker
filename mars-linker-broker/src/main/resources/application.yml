@@ -64,13 +64,13 @@ mars:
           topic: devices/connected
           forward-rules:                             # 仅匹配clientId含device的设备
             - match-type: regex_match
-              expression: "device"
+              expression: "device_"
         disconnected:                                # 事件类型：连接断开
           enabled: true
           topic: devices/disconnected
           forward-rules:                             # 仅匹配clientId含device的设备
             - match-type: regex_match
-              expression: "device"
+              expression: "device_"
         # connect-refused:                           # 事件类型：连接被拒绝
         #   enabled: true
         # subscribed:                                # 事件类型：订阅成功
