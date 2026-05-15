@@ -2,10 +2,14 @@ package com.mars.linker.broker.config;
 
 import com.mars.linker.broker.netty.MqttFrameDecoder;
 import com.mars.linker.broker.netty.NettyMqttBrokerServer;
+import com.mars.linker.broker.netty.protocol.EventForwardConfig;
+import com.mars.linker.broker.netty.protocol.ForwardRule;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 自研 MQTT Broker 配置项（Spring Boot {@link ConfigurationProperties}）。
@@ -291,6 +295,58 @@ public class MarsLinkerMqttBrokerProperties {
      * 明确拒绝 PUBLISH 的 topic 前缀（命中任意一个立即拒绝，优先级高于 allow）。
      */
     private List<String> aclDenyPublishPrefixes = new ArrayList<>();
+
+    /**
+     * 事件通知总开关（默认 false，与标准 MQTT Broker 行为一致）。
+     * <p>
+     * 关闭时：Broker 不发布任何事件通知消息。
+     * 此开关为第一层级控制，各事件类型的 enabled 为第二层级控制。
+     * </p>
+     */
+    private boolean eventNotifyEnabled = false;
+
+    /**
+     * 按事件类型配置转发行为。
+     * <p>
+     * 键名使用 EventType 的 configKey 格式（如 "connected"、"connect-refused"），
+     * 支持 Spring Boot 宽松绑定。
+     * 未在映射中配置的事件类型默认不启用（enabled=false）且使用默认主题。
+     * </p>
+     */
+    private Map<String, EventForwardConfig> eventNotifyConfig = new LinkedHashMap<>();
+
+    /**
+     * 全局默认转发规则列表。
+     * <p>
+     * 未单独配置 forward-rules 的事件类型继承此全局规则。
+     * 默认为空列表，表示未单独配置规则的事件类型对所有设备均匹配（全量转发）。
+     * </p>
+     */
+    private List<ForwardRule> eventNotifyDefaultForwardRules = new ArrayList<>();
+
+    /**
+     * 是否启用设备上下线事件通知（旧配置，已废弃，请使用 event-notify-enabled）。
+     */
+    @Deprecated
+    private boolean lifecycleNotifyEnabled = false;
+
+    /**
+     * 设备上线事件消息的转发目标 MQTT 主题（旧配置，已废弃）。
+     */
+    @Deprecated
+    private String lifecycleConnectedTopic = "devices/connected";
+
+    /**
+     * 设备离线事件消息的转发目标 MQTT 主题（旧配置，已废弃）。
+     */
+    @Deprecated
+    private String lifecycleOfflineTopic = "devices/offline";
+
+    /**
+     * 上下线事件转发规则列表（旧配置，已废弃）。
+     */
+    @Deprecated
+    private List<ForwardRule> lifecycleForwardRules = new ArrayList<>();
 
     public boolean isNettyEnabled() {
         return nettyEnabled;
@@ -730,5 +786,61 @@ public class MarsLinkerMqttBrokerProperties {
 
     public void setAclDenyPublishPrefixes(List<String> aclDenyPublishPrefixes) {
         this.aclDenyPublishPrefixes = aclDenyPublishPrefixes;
+    }
+
+    public boolean isEventNotifyEnabled() {
+        return eventNotifyEnabled;
+    }
+
+    public void setEventNotifyEnabled(boolean eventNotifyEnabled) {
+        this.eventNotifyEnabled = eventNotifyEnabled;
+    }
+
+    public Map<String, EventForwardConfig> getEventNotifyConfig() {
+        return eventNotifyConfig;
+    }
+
+    public void setEventNotifyConfig(Map<String, EventForwardConfig> eventNotifyConfig) {
+        this.eventNotifyConfig = eventNotifyConfig;
+    }
+
+    public List<ForwardRule> getEventNotifyDefaultForwardRules() {
+        return eventNotifyDefaultForwardRules;
+    }
+
+    public void setEventNotifyDefaultForwardRules(List<ForwardRule> eventNotifyDefaultForwardRules) {
+        this.eventNotifyDefaultForwardRules = eventNotifyDefaultForwardRules;
+    }
+
+    public boolean isLifecycleNotifyEnabled() {
+        return lifecycleNotifyEnabled;
+    }
+
+    public void setLifecycleNotifyEnabled(boolean lifecycleNotifyEnabled) {
+        this.lifecycleNotifyEnabled = lifecycleNotifyEnabled;
+    }
+
+    public String getLifecycleConnectedTopic() {
+        return lifecycleConnectedTopic;
+    }
+
+    public void setLifecycleConnectedTopic(String lifecycleConnectedTopic) {
+        this.lifecycleConnectedTopic = lifecycleConnectedTopic;
+    }
+
+    public String getLifecycleOfflineTopic() {
+        return lifecycleOfflineTopic;
+    }
+
+    public void setLifecycleOfflineTopic(String lifecycleOfflineTopic) {
+        this.lifecycleOfflineTopic = lifecycleOfflineTopic;
+    }
+
+    public List<ForwardRule> getLifecycleForwardRules() {
+        return lifecycleForwardRules;
+    }
+
+    public void setLifecycleForwardRules(List<ForwardRule> lifecycleForwardRules) {
+        this.lifecycleForwardRules = lifecycleForwardRules;
     }
 }

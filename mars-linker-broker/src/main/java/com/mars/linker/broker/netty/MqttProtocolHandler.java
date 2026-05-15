@@ -31,6 +31,8 @@ import com.mars.linker.broker.netty.acl.PrefixAclProvider;
 import com.mars.linker.broker.netty.auth.AuthProvider;
 import com.mars.linker.broker.netty.auth.StaticAuthProvider;
 import com.mars.linker.broker.netty.protocol.DeviceLifecyclePublisher;
+import com.mars.linker.broker.netty.protocol.EventNotifyRouter;
+import com.mars.linker.broker.netty.protocol.EventType;
 import com.mars.linker.broker.netty.protocol.PublishRouter;
 import com.mars.linker.broker.netty.protocol.QoS1OutboundService;
 import com.mars.linker.broker.netty.protocol.QoS2InboundService;
@@ -84,6 +86,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
     private final QoS2InboundService qos2Inbound;
     private final QoS2OutboundService qos2Outbound;
     private final DeviceLifecyclePublisher deviceLifecyclePublisher;
+    private final EventNotifyRouter eventNotifyRouter;
     private final int maxConnections;
     private final AclProvider aclProvider;
 
@@ -122,12 +125,14 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
 
     public MqttProtocolHandler() {
         this(false, null, null, false, 5_000, 3, false, Collections.emptyList(), Collections.emptyList(),
-                false, Collections.emptyList(), Collections.emptyList(), 0, 1024);
+                false, Collections.emptyList(), Collections.emptyList(), 0, 1024,
+                new EventNotifyRouter(false, Collections.emptyMap(), Collections.emptyList()));
     }
 
     public MqttProtocolHandler(boolean authEnabled, String authUsername, String authPassword) {
         this(authEnabled, authUsername, authPassword, false, 5_000, 3, false, Collections.emptyList(), Collections.emptyList(),
-                false, Collections.emptyList(), Collections.emptyList(), 0, 1024);
+                false, Collections.emptyList(), Collections.emptyList(), 0, 1024,
+                new EventNotifyRouter(false, Collections.emptyMap(), Collections.emptyList()));
     }
 
     public MqttProtocolHandler(boolean authEnabled,
@@ -138,7 +143,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                                int qos1RetransmitMaxAttempts) {
         this(authEnabled, authUsername, authPassword, qos1RetransmitEnabled, qos1RetransmitIntervalMs, qos1RetransmitMaxAttempts,
                 false, Collections.emptyList(), Collections.emptyList(), false, Collections.emptyList(), Collections.emptyList(),
-                0, 1024);
+                0, 1024, new EventNotifyRouter(false, Collections.emptyMap(), Collections.emptyList()));
     }
 
     public MqttProtocolHandler(boolean authEnabled,
@@ -152,7 +157,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                                List<String> aclAllowPublishPrefixes) {
         this(authEnabled, authUsername, authPassword, qos1RetransmitEnabled, qos1RetransmitIntervalMs, qos1RetransmitMaxAttempts,
                 aclEnabled, aclAllowSubscribePrefixes, aclAllowPublishPrefixes, false, Collections.emptyList(), Collections.emptyList(),
-                0, 1024);
+                0, 1024, new EventNotifyRouter(false, Collections.emptyMap(), Collections.emptyList()));
     }
 
     public MqttProtocolHandler(boolean authEnabled,
@@ -169,7 +174,8 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                                List<String> aclDenyPublishPrefixes) {
         this(authEnabled, authUsername, authPassword, qos1RetransmitEnabled, qos1RetransmitIntervalMs, qos1RetransmitMaxAttempts,
                 aclEnabled, aclAllowSubscribePrefixes, aclAllowPublishPrefixes, aclDefaultDeny,
-                aclDenySubscribePrefixes, aclDenyPublishPrefixes, 0, 1024);
+                aclDenySubscribePrefixes, aclDenyPublishPrefixes, 0, 1024,
+                new EventNotifyRouter(false, Collections.emptyMap(), Collections.emptyList()));
     }
 
     public MqttProtocolHandler(boolean authEnabled,
@@ -186,6 +192,27 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                                List<String> aclDenyPublishPrefixes,
                                int maxConnections,
                                int inboundQos2PendingMax) {
+        this(authEnabled, authUsername, authPassword, qos1RetransmitEnabled, qos1RetransmitIntervalMs, qos1RetransmitMaxAttempts,
+                aclEnabled, aclAllowSubscribePrefixes, aclAllowPublishPrefixes, aclDefaultDeny,
+                aclDenySubscribePrefixes, aclDenyPublishPrefixes, maxConnections, inboundQos2PendingMax,
+                new EventNotifyRouter(false, Collections.emptyMap(), Collections.emptyList()));
+    }
+
+    public MqttProtocolHandler(boolean authEnabled,
+                               String authUsername,
+                               String authPassword,
+                               boolean qos1RetransmitEnabled,
+                               long qos1RetransmitIntervalMs,
+                               int qos1RetransmitMaxAttempts,
+                               boolean aclEnabled,
+                               List<String> aclAllowSubscribePrefixes,
+                               List<String> aclAllowPublishPrefixes,
+                               boolean aclDefaultDeny,
+                               List<String> aclDenySubscribePrefixes,
+                               List<String> aclDenyPublishPrefixes,
+                               int maxConnections,
+                               int inboundQos2PendingMax,
+                               EventNotifyRouter eventNotifyRouter) {
         this(new StaticAuthProvider(authEnabled, authUsername, authPassword),
                 new PrefixAclProvider(aclEnabled,
                         aclAllowSubscribePrefixes,
@@ -197,7 +224,10 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                 qos1RetransmitIntervalMs,
                 qos1RetransmitMaxAttempts,
                 maxConnections,
-                inboundQos2PendingMax);
+                inboundQos2PendingMax,
+                SessionService.create(null, 5000, 604800000L),
+                new BoundedRetainStore(new FileRetainStore(java.nio.file.Paths.get("data", "retain-store.tsv")), 200000, 2592000000L),
+                eventNotifyRouter);
     }
 
     public MqttProtocolHandler(AuthProvider authProvider,
@@ -210,7 +240,8 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         this(authProvider, aclProvider, qos1RetransmitEnabled, qos1RetransmitIntervalMs, qos1RetransmitMaxAttempts,
                 maxConnections, inboundQos2PendingMax,
                 SessionService.create(null, 5000, 604800000L),
-                new BoundedRetainStore(new FileRetainStore(java.nio.file.Paths.get("data", "retain-store.tsv")), 200000, 2592000000L));
+                new BoundedRetainStore(new FileRetainStore(java.nio.file.Paths.get("data", "retain-store.tsv")), 200000, 2592000000L),
+                new EventNotifyRouter(false, Collections.emptyMap(), Collections.emptyList()));
     }
 
     public MqttProtocolHandler(AuthProvider authProvider,
@@ -222,6 +253,21 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                                int inboundQos2PendingMax,
                                SessionService SESSION_SERVICE,
                                RetainStore RETAIN_STORE) {
+        this(authProvider, aclProvider, qos1RetransmitEnabled, qos1RetransmitIntervalMs, qos1RetransmitMaxAttempts,
+                maxConnections, inboundQos2PendingMax, SESSION_SERVICE, RETAIN_STORE,
+                new EventNotifyRouter(false, Collections.emptyMap(), Collections.emptyList()));
+    }
+
+    public MqttProtocolHandler(AuthProvider authProvider,
+                               AclProvider aclProvider,
+                               boolean qos1RetransmitEnabled,
+                               long qos1RetransmitIntervalMs,
+                               int qos1RetransmitMaxAttempts,
+                               int maxConnections,
+                               int inboundQos2PendingMax,
+                               SessionService SESSION_SERVICE,
+                               RetainStore RETAIN_STORE,
+                               EventNotifyRouter eventNotifyRouter) {
         this.authProvider = authProvider == null ? new StaticAuthProvider(false, null, null) : authProvider;
         this.aclProvider = aclProvider == null
                 ? new PrefixAclProvider(false, Collections.emptyList(), Collections.emptyList(),
@@ -262,6 +308,8 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         this.deviceLifecyclePublisher = new DeviceLifecyclePublisher(
                 (topic, body) -> publishToSubscribers(topic, body, false, false, 1)
         );
+        this.eventNotifyRouter = eventNotifyRouter != null ? eventNotifyRouter
+                : new EventNotifyRouter(false, Collections.emptyMap(), Collections.emptyList());
         INSTANCE = this;
     }
 
@@ -407,14 +455,15 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                 }
                 log.info("Will 已发布 topic={} qos={} retain={} bytes={} -> 投递{}路 channelId={}",
                         willTopic, willQos, willRetain, willPayload.length, delivered, ctx.channel().id().asShortText());
+                notifyEvent(ctx, EventType.WILL_PUBLISHED, session.clientId(), "will_publish", null);
                 }
             }
         }
         if (Boolean.TRUE.equals(session.connected())) {
             String clientId = session.clientId();
             String reason = session.closeReason();
-            publishDeviceLifecycleEvent(ctx, DeviceLifecyclePublisher.DEVICE_OFFLINE_TOPIC, "offline", clientId,
-                    reason == null ? "connection_lost" : reason);
+            String disconnectReason = reason != null ? reason : "connection_lost";
+            notifyEvent(ctx, EventType.DISCONNECTED, clientId, disconnectReason, null);
         }
 
         Boolean clean = session.cleanSession();
@@ -424,6 +473,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
             if (clientId != null) {
                 SESSION_SERVICE.remove(clientId);
                 CLIENT_TO_CHANNEL.remove(clientId);
+                notifyEvent(ctx, EventType.SESSION_DESTROYED, clientId, "session_destroy", null);
             }
         }
         if (channels.remove(ctx.channel().id()) != null) {
@@ -457,6 +507,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         String protocolName = readMqttUtf8(payload);
         if (!"MQTT".equals(protocolName)) {
             log.warn("CONNECT 协议名非 MQTT: [{}] channelId={}", protocolName, ctx.channel().id().asShortText());
+            notifyEvent(ctx, EventType.CONNECT_REFUSED, null, "protocol_name_invalid", null);
             writeConnAckAndClose(ctx, 0x01);
             METRIC_CONNECT_REJECTED_TOTAL.increment();
             return;
@@ -474,6 +525,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         if (protocolLevel != 0x04 && protocolLevel != 0x05) {
             log.warn("CONNECT 不支持的协议级别 0x{} channelId={}",
                     Integer.toHexString(protocolLevel), ctx.channel().id().asShortText());
+            notifyEvent(ctx, EventType.CONNECT_REFUSED, null, "unsupported_protocol_level", null);
             writeConnAckAndClose(ctx, 0x01);
             METRIC_CONNECT_REJECTED_TOTAL.increment();
             return;
@@ -487,6 +539,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         }
         String clientId = readMqttUtf8(payload);
         if (clientId == null || clientId.isEmpty()) {
+            notifyEvent(ctx, EventType.CONNECT_REFUSED, clientId, "client_id_empty", null);
             writeConnAckAndClose(ctx, 0x02);
             METRIC_CONNECT_REJECTED_TOTAL.increment();
             return;
@@ -507,6 +560,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         if (willFlag && willQos == 2) {
             log.warn("CONNECT Will QoS2 暂不支持 clientId={} channelId={}",
                     clientId, ctx.channel().id().asShortText());
+            notifyEvent(ctx, EventType.CONNECT_REFUSED, clientId, "will_qos2_unsupported", null);
             writeConnAckAndClose(ctx, 0x03);
             METRIC_CONNECT_REJECTED_TOTAL.increment();
             return;
@@ -559,6 +613,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         if (!authOk) {
             log.warn("CONNECT 鉴权失败 clientId={} username={} channelId={} remote={}",
                     clientId, username, ctx.channel().id().asShortText(), ctx.channel().remoteAddress());
+            notifyEvent(ctx, EventType.CONNECT_REFUSED, clientId, "auth_failed", null);
             writeConnAckAndClose(ctx, 0x05);
             METRIC_CONNECT_REJECTED_TOTAL.increment();
             return;
@@ -582,11 +637,13 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                 log.warn("clientId={} 已存在旧连接，关闭旧连接 oldChannelId={} newChannelId={}",
                         clientId, oldChannelId.asShortText(), ctx.channel().id().asShortText());
                 ClientSessionContext.of(oldCtx).closeReason("kicked_by_new_connection");
+                notifyEvent(oldCtx, EventType.CONNECTION_KICKED, clientId, "kicked_by_new_connection", null);
                 oldCtx.close();
             }
         }
 
         SessionService.Session persistedSession = SESSION_SERVICE.getOrCreate(clientId);
+        notifyEvent(ctx, EventType.SESSION_CREATED, clientId, "session_create", null);
         boolean sessionPresent = !cleanSession && SESSION_SERVICE.get(clientId) != null
                 && !persistedSession.subscriptionsQos.isEmpty();
         if (cleanSession) {
@@ -627,7 +684,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         log.info("CONNECT 成功 clientId={} keepAlive={}s channelId={}",
                 clientId, keepAlive, ctx.channel().id().asShortText());
         METRIC_CONNECT_ACCEPTED_TOTAL.increment();
-        publishDeviceLifecycleEvent(ctx, DeviceLifecyclePublisher.DEVICE_CONNECTED_TOPIC, "connected", clientId, "connect");
+        notifyEvent(ctx, EventType.CONNECTED, clientId, "connect", null);
 
         if (!cleanSession) {
             // 补发离线队列（阶段 1：仅内存队列；QoS 取原入队 QoS 与订阅 QoS 的 min）
@@ -747,6 +804,9 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         }
         log.info("SUBACK packetId={} returnCodes={} channelId={}",
                 packetId, returnCodes, ctx.channel().id().asShortText());
+        if (!acceptedFilters.isEmpty()) {
+            notifyEvent(ctx, EventType.SUBSCRIBED, session.clientId(), "subscribe", null);
+        }
     }
 
     /**
@@ -801,6 +861,9 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         ctx.writeAndFlush(unSubAck);
         log.info("UNSUBACK packetId={} removed={} channelId={}",
                 packetId, removed, ctx.channel().id().asShortText());
+        if (removed > 0) {
+            notifyEvent(ctx, EventType.UNSUBSCRIBED, session.clientId(), "unsubscribe", null);
+        }
     }
 
     /**
@@ -1444,18 +1507,26 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         } while (x > 0);
     }
 
-    private void publishDeviceLifecycleEvent(ChannelHandlerContext ctx,
-                                             String topic,
-                                             String event,
-                                             String clientId,
-                                             String reason) {
+    private void notifyEvent(ChannelHandlerContext ctx,
+                             EventType eventType,
+                             String clientId,
+                             String reason,
+                             Map<String, Object> extensions) {
+        String topic = eventNotifyRouter.shouldNotify(eventType, clientId);
+        if (topic == null) {
+            return;
+        }
+        if (!aclAllowsPublish(topic)) {
+            log.warn("事件通知被 ACL 拒绝 topic={} event={} clientId={}", topic, eventType.getValue(), clientId);
+            return;
+        }
         DeviceLifecyclePublisher.PublishResult result =
-                deviceLifecyclePublisher.publish(ctx, topic, event, clientId, reason);
+                deviceLifecyclePublisher.publish(ctx, topic, eventType.getValue(), clientId, reason, extensions);
         if (result == null) {
             return;
         }
-        log.info("设备状态事件 topic={} event={} clientId={} ip={} port={} reason={} delivered={}",
-                topic, event, clientId, result.ip, result.port, reason, result.delivered);
+        log.info("事件通知 topic={} event={} clientId={} ip={} port={} reason={} delivered={}",
+                topic, eventType.getValue(), clientId, result.ip, result.port, reason, result.delivered);
     }
 
     @Override

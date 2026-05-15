@@ -53,6 +53,43 @@ mars:
       acl-allow-publish-prefixes: []
       acl-deny-subscribe-prefixes: []
       acl-deny-publish-prefixes: []
+      # --- 事件通知配置（新配置体系） ---
+      event-notify-enabled: true    # 事件通知总开关
+      # event-notify-default-forward-rules:          # 全局默认转发规则（未配置独立规则的事件类型继承此规则）
+      #   - match-type: regex_match
+      #     expression: "device|gateway"
+      event-notify-config:                           # 按事件类型配置转发行为
+        connected:                                   # 事件类型：连接成功
+          enabled: true
+          topic: devices/connected
+          forward-rules:                             # 仅匹配clientId含device的设备
+            - match-type: regex_match
+              expression: "device"
+        disconnected:                                # 事件类型：连接断开
+          enabled: true
+          topic: devices/disconnected
+          forward-rules:                             # 仅匹配clientId含device的设备
+            - match-type: regex_match
+              expression: "device"
+        # connect-refused:                           # 事件类型：连接被拒绝
+        #   enabled: true
+        # subscribed:                                # 事件类型：订阅成功
+        #   enabled: true
+        # unsubscribed:                              # 事件类型：取消订阅
+        #   enabled: false
+        # session-created:                           # 事件类型：会话创建
+        #   enabled: true
+        # session-destroyed:                         # 事件类型：会话销毁
+        #   enabled: true
+        # will-published:                            # 事件类型：遗嘱消息发布
+        #   enabled: true
+        # connection-kicked:                         # 事件类型：旧连接被踢下线
+        #   enabled: true
+      # --- 旧配置（已废弃，兼容迁移） ---
+      # lifecycle-notify-enabled: false
+      # lifecycle-connected-topic: devices/connected
+      # lifecycle-offline-topic: devices/offline
+      # lifecycle-forward-rules: []
     ui:
       enabled: true
       collection-buffer-size: 1000

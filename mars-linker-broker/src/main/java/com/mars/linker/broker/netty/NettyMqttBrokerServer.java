@@ -1,5 +1,6 @@
 package com.mars.linker.broker.netty;
 
+import com.mars.linker.broker.config.LifecycleConfigValidator;
 import com.mars.linker.broker.config.MarsLinkerMqttBrokerProperties;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
@@ -17,8 +18,10 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
+import java.util.Collections;
 import java.util.concurrent.TimeUnit;
 import java.io.File;
+import com.mars.linker.broker.netty.protocol.EventNotifyRouter;
 import com.mars.linker.broker.netty.acl.AclProviderFactory;
 import com.mars.linker.broker.netty.auth.AuthProviderFactory;
 import com.mars.linker.broker.netty.store.RetainStore;
@@ -69,6 +72,12 @@ public class NettyMqttBrokerServer implements SmartLifecycle {
         );
         this.authProvider = AuthProviderFactory.create(properties);
         this.aclProvider = AclProviderFactory.create(properties);
+        LifecycleConfigValidator.validate(properties);
+        EventNotifyRouter eventNotifyRouter = new EventNotifyRouter(
+                properties.isEventNotifyEnabled(),
+                properties.getEventNotifyConfig(),
+                properties.getEventNotifyDefaultForwardRules()
+        );
         this.mqttProtocolHandler = new MqttProtocolHandler(
                 this.authProvider,
                 this.aclProvider,
@@ -82,7 +91,8 @@ public class NettyMqttBrokerServer implements SmartLifecycle {
                         properties.getSessionOfflineMaxMessages(),
                         properties.getSessionOfflineTtlMs()
                 ),
-                this.retainStore
+                this.retainStore,
+                eventNotifyRouter
         );
         this.sslContext = buildServerSslContextIfNeeded(properties);
     }
@@ -120,6 +130,20 @@ public class NettyMqttBrokerServer implements SmartLifecycle {
             log.info("Netty MQTT TLS listening on port {} (boss={}, worker={})", listenPort, boss, workers);
         } else {
             log.info("Netty MQTT TCP listening on port {} (boss={}, worker={})", listenPort, boss, workers);
+        }
+        if (properties.isEventNotifyEnabled()) {
+            log.info("事件通知已启用：eventNotifyEnabled=true");
+            if (properties.getEventNotifyConfig() != null && !properties.getEventNotifyConfig().isEmpty()) {
+                log.info("已配置事件类型数量：{}", properties.getEventNotifyConfig().size());
+            }
+            if (properties.getEventNotifyDefaultForwardRules() == null
+                    || properties.getEventNotifyDefaultForwardRules().isEmpty()) {
+                log.info("未配置全局默认转发规则，未单独配置规则的事件类型将全量转发");
+            } else {
+                log.info("全局默认转发规则数量：{}", properties.getEventNotifyDefaultForwardRules().size());
+            }
+        } else {
+            log.info("事件通知已关闭（标准 MQTT Broker 行为）");
         }
     }
 
