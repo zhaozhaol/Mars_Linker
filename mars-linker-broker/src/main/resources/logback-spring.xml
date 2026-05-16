@@ -56,7 +56,12 @@
     <logger name="com.mars.linker.broker.netty" level="DEBUG" additivity="false">
         <appender-ref ref="MQTT_FILE"/>
         <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+        <appender-ref ref="ERROR_FILE"/>
     </logger>
+
+    <!-- 拒绝消息采集 logger -->
+    <logger name="com.mars.linker.broker.ui.rejection" level="INFO" additivity="true"/>
 
     <!-- 降低 Spring 日志级别 -->
     <logger name="org.springframework" level="WARN"/>

@@ -23,7 +23,7 @@
 <script setup lang="ts">
 import { reactive } from 'vue'
 
-const props = defineProps<{ submitting: boolean }>()
+defineProps<{ submitting: boolean }>()
 const emit = defineEmits<{ submit: [form: { type: string; source: string; payload: string }] }>()
 
 const form = reactive({ type: 'custom', source: 'ui', payload: '' })

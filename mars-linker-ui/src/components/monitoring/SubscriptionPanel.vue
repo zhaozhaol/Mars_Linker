@@ -108,7 +108,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, watch } from 'vue'
 import type { SubscriptionMetrics, SubscriptionTopicInfo, SubscriberDetail, ClientSubscriptionInfo } from '../../types/monitoring'
 import { getSubscriptionTopics, getSubscriptionSubscribers, getClientSubscriptions } from '../../api/monitoring'
 import MetricSkeleton from './MetricSkeleton.vue'

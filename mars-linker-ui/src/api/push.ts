@@ -1,4 +1,4 @@
-import type { PushMessage, MetricCategory } from '../types/push'
+import type { MetricCategory } from '../types/push'
 
 const WS_BASE = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/ui/monitoring/ws`
 const SSE_BASE = '/api/ui/monitoring/sse'

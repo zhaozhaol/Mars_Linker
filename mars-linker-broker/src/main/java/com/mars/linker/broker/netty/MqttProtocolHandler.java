@@ -43,6 +43,8 @@ import com.mars.linker.broker.netty.store.BoundedRetainStore;
 import com.mars.linker.broker.netty.store.FileRetainStore;
 import com.mars.linker.broker.netty.store.RetainStore;
 import com.mars.linker.broker.netty.store.SessionService;
+import com.mars.linker.broker.ui.rejection.RejectionMessageCollector;
+import com.mars.linker.broker.ui.rejection.model.RejectionReason;
 
 /**
  * MQTT 3.1.1 协议处理（当前为阶段 4/5 的持续演进实现）。
@@ -89,6 +91,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
     private final EventNotifyRouter eventNotifyRouter;
     private final int maxConnections;
     private final AclProvider aclProvider;
+    private volatile RejectionMessageCollector rejectionMessageCollector;
 
     // 指标：使用 LongAdder 作为轻量并发计数器，由 MqttBrokerMetricsBinder 暴露到 Micrometer。
     private final LongAdder METRIC_CONNECTIONS_ACTIVE = new LongAdder();
@@ -313,6 +316,10 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         INSTANCE = this;
     }
 
+    public void setRejectionMessageCollector(RejectionMessageCollector collector) {
+        this.rejectionMessageCollector = collector;
+    }
+
     @Override
     public void channelActive(ChannelHandlerContext ctx) throws Exception {
         if (maxConnections > 0) {
@@ -442,7 +449,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
             Integer willQos = session.willQos();
             Boolean willRetain = session.willRetain();
             if (willTopic != null && willPayload != null && willQos != null && willRetain != null) {
-                if (!aclAllowsPublish(willTopic)) {
+                if (!aclAllowsPublish(willTopic, ctx)) {
                     log.warn("Will 被 ACL 拒绝 topic={} channelId={}", willTopic, ctx.channel().id().asShortText());
                 } else {
                 int delivered = publishToSubscribers(willTopic, willPayload, willRetain, false, willQos);
@@ -506,8 +513,11 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         int start = payload.readerIndex();
         String protocolName = readMqttUtf8(payload);
         if (!"MQTT".equals(protocolName)) {
-            log.warn("CONNECT 协议名非 MQTT: [{}] channelId={}", protocolName, ctx.channel().id().asShortText());
+            log.warn("CONNECT refused reason=protocol_name_invalid protocolName=[{}] channelId={}", protocolName, ctx.channel().id().asShortText());
             notifyEvent(ctx, EventType.CONNECT_REFUSED, null, "protocol_name_invalid", null);
+            if (rejectionMessageCollector != null) {
+                rejectionMessageCollector.collectConnectRefused(null, RejectionReason.PROTOCOL_NAME_INVALID, 0x01, String.valueOf(ctx.channel().remoteAddress()));
+            }
             writeConnAckAndClose(ctx, 0x01);
             METRIC_CONNECT_REJECTED_TOTAL.increment();
             return;
@@ -523,9 +533,12 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         int keepAlive = payload.readUnsignedShort();
 
         if (protocolLevel != 0x04 && protocolLevel != 0x05) {
-            log.warn("CONNECT 不支持的协议级别 0x{} channelId={}",
+            log.warn("CONNECT refused reason=unsupported_protocol_level protocolLevel=0x{} channelId={}",
                     Integer.toHexString(protocolLevel), ctx.channel().id().asShortText());
             notifyEvent(ctx, EventType.CONNECT_REFUSED, null, "unsupported_protocol_level", null);
+            if (rejectionMessageCollector != null) {
+                rejectionMessageCollector.collectConnectRefused(null, RejectionReason.UNSUPPORTED_PROTOCOL_LEVEL, 0x01, String.valueOf(ctx.channel().remoteAddress()));
+            }
             writeConnAckAndClose(ctx, 0x01);
             METRIC_CONNECT_REJECTED_TOTAL.increment();
             return;
@@ -539,7 +552,11 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         }
         String clientId = readMqttUtf8(payload);
         if (clientId == null || clientId.isEmpty()) {
+            log.warn("CONNECT refused reason=client_id_empty channelId={}", ctx.channel().id().asShortText());
             notifyEvent(ctx, EventType.CONNECT_REFUSED, clientId, "client_id_empty", null);
+            if (rejectionMessageCollector != null) {
+                rejectionMessageCollector.collectConnectRefused(null, RejectionReason.CLIENT_ID_EMPTY, 0x02, String.valueOf(ctx.channel().remoteAddress()));
+            }
             writeConnAckAndClose(ctx, 0x02);
             METRIC_CONNECT_REJECTED_TOTAL.increment();
             return;
@@ -558,9 +575,12 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
             return;
         }
         if (willFlag && willQos == 2) {
-            log.warn("CONNECT Will QoS2 暂不支持 clientId={} channelId={}",
+            log.warn("CONNECT refused reason=will_qos2_unsupported clientId={} channelId={}",
                     clientId, ctx.channel().id().asShortText());
             notifyEvent(ctx, EventType.CONNECT_REFUSED, clientId, "will_qos2_unsupported", null);
+            if (rejectionMessageCollector != null) {
+                rejectionMessageCollector.collectConnectRefused(clientId, RejectionReason.WILL_QOS2_UNSUPPORTED, 0x03, String.valueOf(ctx.channel().remoteAddress()));
+            }
             writeConnAckAndClose(ctx, 0x03);
             METRIC_CONNECT_REJECTED_TOTAL.increment();
             return;
@@ -611,9 +631,12 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
 
         boolean authOk = authProvider.authenticate(clientId, username, password);
         if (!authOk) {
-            log.warn("CONNECT 鉴权失败 clientId={} username={} channelId={} remote={}",
+            log.warn("CONNECT refused reason=auth_failed clientId={} username={} channelId={} remote={}",
                     clientId, username, ctx.channel().id().asShortText(), ctx.channel().remoteAddress());
             notifyEvent(ctx, EventType.CONNECT_REFUSED, clientId, "auth_failed", null);
+            if (rejectionMessageCollector != null) {
+                rejectionMessageCollector.collectConnectRefused(clientId, RejectionReason.AUTH_FAILED, 0x05, String.valueOf(ctx.channel().remoteAddress()));
+            }
             writeConnAckAndClose(ctx, 0x05);
             METRIC_CONNECT_REJECTED_TOTAL.increment();
             return;
@@ -771,7 +794,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                     ? TopicFilterSupport.parseShareSubscription(topicFilter) != null
                     : TopicFilterSupport.isValidTopicFilter(topicFilter);
 
-            if (requestedQos <= 2 && valid && aclAllowsSubscribe(topicFilter)) {
+            if (requestedQos <= 2 && valid && aclAllowsSubscribe(topicFilter, ctx)) {
                 int grantedQos = requestedQos;
                 addSubscription(ctx.channel().id(), topicFilter, grantedQos);
                 returnCodes.add(grantedQos);
@@ -884,7 +907,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                     ctx.channel().remoteAddress());
             return;
         }
-        if (!aclAllowsPublish(topic)) {
+        if (!aclAllowsPublish(topic, ctx)) {
             // PUBLISH 拒绝策略：直接关闭连接（与很多 Broker 的“协议违规/未授权”处理一致，避免继续收消息）。
             closeWithReason(ctx, "ACL 拒绝 PUBLISH topic=" + topic);
             return;
@@ -1054,18 +1077,30 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         );
     }
 
-    private boolean aclAllowsSubscribe(String topicFilter) {
+    private boolean aclAllowsSubscribe(String topicFilter, ChannelHandlerContext ctx) {
         boolean allowed = aclProvider.allowsSubscribe(topicFilter);
         if (!allowed) {
             METRIC_ACL_SUB_DENY_TOTAL.increment();
+            String clientId = CHANNEL_TO_CLIENT.get(ctx.channel().id());
+            log.warn("ACL denied action=subscribe clientId={} topicFilter={} channelId={}",
+                    clientId, topicFilter, ctx.channel().id().asShortText());
+            if (rejectionMessageCollector != null) {
+                rejectionMessageCollector.collectAclSubscribeDenied(clientId, topicFilter, String.valueOf(ctx.channel().remoteAddress()));
+            }
         }
         return allowed;
     }
 
-    private boolean aclAllowsPublish(String topic) {
+    private boolean aclAllowsPublish(String topic, ChannelHandlerContext ctx) {
         boolean allowed = aclProvider.allowsPublish(topic);
         if (!allowed) {
             METRIC_ACL_PUB_DENY_TOTAL.increment();
+            String clientId = CHANNEL_TO_CLIENT.get(ctx.channel().id());
+            log.warn("ACL denied action=publish clientId={} topic={} channelId={}",
+                    clientId, topic, ctx.channel().id().asShortText());
+            if (rejectionMessageCollector != null) {
+                rejectionMessageCollector.collectAclPublishDenied(clientId, topic, String.valueOf(ctx.channel().remoteAddress()));
+            }
         }
         return allowed;
     }
@@ -1516,7 +1551,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         if (topic == null) {
             return;
         }
-        if (!aclAllowsPublish(topic)) {
+        if (!aclAllowsPublish(topic, ctx)) {
             log.warn("事件通知被 ACL 拒绝 topic={} event={} clientId={}", topic, eventType.getValue(), clientId);
             return;
         }

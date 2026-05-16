@@ -41,7 +41,7 @@
           <div class="evt-time">
             <span>触发: {{ formatTime(evt.triggeredAt) }}</span>
             <span v-if="!evt.active && evt.resolvedAt"> | 恢复: {{ formatTime(evt.resolvedAt) }}</span>
-            <span v-if="evt.resolvedBy"> | 原因: {{ evt.resolvedBy }}</span>
+            <span v-if="evt.resolvedAt && !evt.active"> | 已自动恢复</span>
           </div>
         </div>
       </div>

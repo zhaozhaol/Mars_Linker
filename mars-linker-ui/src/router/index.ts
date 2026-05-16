@@ -49,6 +49,11 @@ const router = createRouter({
       component: () => import('../views/LogStream.vue')
     },
     {
+      path: '/rejection/messages',
+      name: 'RejectionMessages',
+      component: () => import('../views/RejectionMessages.vue')
+    },
+    {
       path: '/alert/rules',
       name: 'AlertRules',
       component: () => import('../views/AlertRules.vue')
