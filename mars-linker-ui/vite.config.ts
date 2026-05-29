@@ -8,7 +8,10 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://140.210.218.252:8088',
-        changeOrigin: true
+        //target: 'http://127.0.0.1:11884',
+        changeOrigin: true,
+        timeout: 60000,
+        proxyTimeout: 60000
       }
     }
   },

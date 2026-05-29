@@ -1,6 +1,7 @@
 package com.mars.linker.broker.ui.monitoring;
 
 import com.mars.linker.broker.netty.MqttProtocolHandler;
+import com.mars.linker.broker.netty.protocol.TopicRateLimiter;
 import com.mars.linker.broker.ui.monitoring.history.MonitoringHistoryService;
 import com.mars.linker.broker.ui.monitoring.isolation.ApiRateLimiter;
 import com.mars.linker.broker.ui.monitoring.push.MonitoringSseHandler;
@@ -179,5 +180,36 @@ public class MonitoringController {
             }
         }
         return ResponseEntity.ok(Map.of("requested", clientIds.size(), "disconnected", disconnected));
+    }
+
+    @GetMapping("/topic-rate-limits")
+    public ResponseEntity<?> topicRateLimits() {
+        ResponseEntity<?> limitCheck = checkRateLimit();
+        if (limitCheck != null) return limitCheck;
+        TopicRateLimiter limiter = protocolHandler.getTopicRateLimiter();
+        if (limiter == null) {
+            return ResponseEntity.ok(Map.of("rules", 0, "stats", Map.of()));
+        }
+        return ResponseEntity.ok(Map.of(
+                "rules", limiter.getRuleCount(),
+                "stats", limiter.getStats()
+        ));
+    }
+
+    @GetMapping("/topic-rate-limits/{topic}")
+    public ResponseEntity<?> topicRateLimitDetail(@PathVariable String topic) {
+        ResponseEntity<?> limitCheck = checkRateLimit();
+        if (limitCheck != null) return limitCheck;
+        TopicRateLimiter limiter = protocolHandler.getTopicRateLimiter();
+        if (limiter == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", "Topic rate limiter not initialized"));
+        }
+        TopicRateLimiter.TopicRateLimitStats stats = limiter.getStats(topic);
+        if (stats == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", "No rate limit configured for topic: " + topic));
+        }
+        return ResponseEntity.ok(stats);
     }
 }

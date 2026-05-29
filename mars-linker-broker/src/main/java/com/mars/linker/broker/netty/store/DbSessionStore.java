@@ -3,32 +3,47 @@ package com.mars.linker.broker.netty.store;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
+import javax.sql.DataSource;
+import java.sql.*;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * DB 版 SessionStore（全量快照语义）。
+ * DB 版 SessionStore（全量快照语义），使用 HikariCP 连接池。
+ * <p>
+ * 线程安全策略：依赖连接池并发能力，所有方法无需 synchronized。
+ * 连接通过 try-with-resources 管理生命周期，使用后正确归还连接池。
+ * </p>
  */
 public final class DbSessionStore implements SessionStore {
     private static final Logger log = LoggerFactory.getLogger(DbSessionStore.class);
 
-    private final String jdbcUrl;
-    private final String username;
-    private final String password;
+    private final DataSource dataSource;
     private final String tableSubs;
     private final String tableOffline;
     private final String tableSessionIndex;
 
+    /**
+     * 兼容旧构造函数（无连接池，使用 DriverManager）。
+     */
     public DbSessionStore(String jdbcUrl, String username, String password, String schema, String tablePrefix) {
-        this.jdbcUrl = jdbcUrl;
-        this.username = username;
-        this.password = password;
+        this.dataSource = new SimpleDriverDataSource(jdbcUrl, username, password);
+        String fullPrefix = DbStoreNaming.prefix(schema, tablePrefix);
+        this.tableSubs = fullPrefix + "session_subscriptions";
+        this.tableOffline = fullPrefix + "session_offline_messages";
+        this.tableSessionIndex = fullPrefix + "sessions";
+        initSchema();
+    }
+
+    /**
+     * 推荐构造函数（使用 HikariCP 连接池）。
+     *
+     * @param dataSource   HikariCP 数据源
+     * @param schema       数据库 schema
+     * @param tablePrefix  表名前缀
+     */
+    public DbSessionStore(DataSource dataSource, String schema, String tablePrefix) {
+        this.dataSource = dataSource;
         String fullPrefix = DbStoreNaming.prefix(schema, tablePrefix);
         this.tableSubs = fullPrefix + "session_subscriptions";
         this.tableOffline = fullPrefix + "session_offline_messages";
@@ -37,7 +52,7 @@ public final class DbSessionStore implements SessionStore {
     }
 
     @Override
-    public synchronized Map<String, SessionService.Session> loadAll() {
+    public Map<String, SessionService.Session> loadAll() {
         Map<String, SessionService.Session> out = new ConcurrentHashMap<>();
         try (Connection c = getConnection()) {
             try (PreparedStatement ps = c.prepareStatement("SELECT client_id FROM " + tableSessionIndex);
@@ -56,7 +71,7 @@ public final class DbSessionStore implements SessionStore {
                 while (rs.next()) {
                     String clientId = rs.getString(1);
                     SessionService.Session s = out.computeIfAbsent(clientId, SessionService.Session::new);
-                    s.subscriptionsQos.put(rs.getString(2), rs.getInt(3));
+                    s.subscriptionsQos().put(rs.getString(2), rs.getInt(3));
                 }
             }
 
@@ -83,7 +98,7 @@ public final class DbSessionStore implements SessionStore {
     }
 
     @Override
-    public synchronized void persistAll(Map<String, SessionService.Session> sessions) {
+    public void persistAll(Map<String, SessionService.Session> sessions) {
         try (Connection c = getConnection()) {
             c.setAutoCommit(false);
             try {
@@ -102,7 +117,7 @@ public final class DbSessionStore implements SessionStore {
     }
 
     @Override
-    public synchronized void deleteIfExists() {
+    public void deleteIfExists() {
         try (Connection c = getConnection()) {
             clearTables(c);
         } catch (SQLException e) {
@@ -123,7 +138,7 @@ public final class DbSessionStore implements SessionStore {
                 psIndex.setString(1, s.clientId);
                 psIndex.addBatch();
 
-                for (Map.Entry<String, Integer> sub : s.subscriptionsQos.entrySet()) {
+                for (Map.Entry<String, Integer> sub : s.subscriptionsQos().entrySet()) {
                     psSub.setString(1, s.clientId);
                     psSub.setString(2, sub.getKey());
                     psSub.setInt(3, sub.getValue() == null ? 0 : sub.getValue());
@@ -170,7 +185,6 @@ public final class DbSessionStore implements SessionStore {
             try {
                 st.execute("ALTER TABLE " + tableOffline + " ADD COLUMN created_at BIGINT NOT NULL DEFAULT 0");
             } catch (SQLException ignored) {
-                // column may already exist
             }
         } catch (SQLException e) {
             throw new IllegalStateException("初始化 DB Session 表失败", e);
@@ -178,7 +192,31 @@ public final class DbSessionStore implements SessionStore {
     }
 
     private Connection getConnection() throws SQLException {
-        return DriverManager.getConnection(jdbcUrl, username, password);
+        return dataSource.getConnection();
+    }
+
+    /**
+     * 简易 DataSource 适配器，用于无 HikariCP 时的回退。
+     */
+    public static final class SimpleDriverDataSource implements DataSource {
+        private final String url;
+        private final String user;
+        private final String pass;
+
+        SimpleDriverDataSource(String url, String user, String pass) {
+            this.url = url;
+            this.user = user;
+            this.pass = pass;
+        }
+
+        @Override public Connection getConnection() throws SQLException { return DriverManager.getConnection(url, user, pass); }
+        @Override public Connection getConnection(String u, String p) throws SQLException { return DriverManager.getConnection(url, u, p); }
+        @Override public java.io.PrintWriter getLogWriter() { return null; }
+        @Override public void setLogWriter(java.io.PrintWriter out) {}
+        @Override public void setLoginTimeout(int seconds) {}
+        @Override public int getLoginTimeout() { return 0; }
+        @Override public java.util.logging.Logger getParentLogger() { return null; }
+        @Override public <T> T unwrap(Class<T> iface) throws SQLException { throw new SQLException("Not a wrapper"); }
+        @Override public boolean isWrapperFor(Class<?> iface) { return false; }
     }
 }
-

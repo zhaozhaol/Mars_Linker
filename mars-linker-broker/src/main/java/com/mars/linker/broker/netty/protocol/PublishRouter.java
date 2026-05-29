@@ -125,17 +125,12 @@ public final class PublishRouter {
                                                             SessionService sessionService,
                                                             Map<String, ChannelId> clientToChannel,
                                                             Map<ChannelId, ChannelHandlerContext> channels) {
-        for (SessionService.Session session : sessionService.allSessions()) {
-            if (session == null || session.subscriptionsQos.isEmpty()) {
-                continue;
-            }
-            ChannelId activeChannelId = clientToChannel.get(session.clientId);
-            ChannelHandlerContext activeCtx = activeChannelId == null ? null : channels.get(activeChannelId);
-            if (activeCtx != null && activeCtx.channel().isActive()) {
+        for (SessionService.Session session : sessionService.offlineSessions()) {
+            if (session == null) {
                 continue;
             }
             int granted = -1;
-            for (Map.Entry<String, Integer> sub : session.subscriptionsQos.entrySet()) {
+            for (Map.Entry<String, Integer> sub : session.subscriptionsQos().entrySet()) {
                 if (TopicFilterSupport.matchTopicFilter(sub.getKey(), topic)) {
                     int q = sub.getValue() == null ? 0 : sub.getValue();
                     granted = Math.max(granted, q);

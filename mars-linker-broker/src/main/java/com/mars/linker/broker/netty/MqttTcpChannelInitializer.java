@@ -7,10 +7,11 @@ import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.ssl.SslContext;
 
 /**
- * MQTT TCP 子通道管道：{@link LoggingHandler}（INFO）→ {@link MqttFrameDecoder} → {@link MqttProtocolHandler}。
+ * MQTT TCP 子通道管道：{@link LoggingHandler} → {@link MqttFrameDecoder} → {@link MqttProtocolHandler}。
  * <p>
- * <b>测试备注</b>：管道级行为（半包/粘包、真实客户端）建议用集成测试或本地连 {@link NettyMqttBrokerServer}；
- * 解码与协议逻辑以各 Handler 的单元测试为主。
+ * 设计决策：
+ * - LoggingHandler 日志级别可通过 pipelineLogLevel 参数配置（默认 DEBUG，生产环境不输出每个报文）
+ * - INFO 级别日志仍通过 StructuredLogger 记录连接/断开/鉴权失败等关键事件
  * </p>
  */
 public class MqttTcpChannelInitializer extends ChannelInitializer<SocketChannel> {
@@ -18,15 +19,22 @@ public class MqttTcpChannelInitializer extends ChannelInitializer<SocketChannel>
     private final int maxPacketBytes;
     private final MqttProtocolHandler mqttProtocolHandler;
     private final SslContext sslContext;
+    private final LogLevel pipelineLogLevel;
 
     public MqttTcpChannelInitializer(int maxPacketBytes, MqttProtocolHandler mqttProtocolHandler) {
-        this(maxPacketBytes, mqttProtocolHandler, null);
+        this(maxPacketBytes, mqttProtocolHandler, null, LogLevel.DEBUG);
     }
 
     public MqttTcpChannelInitializer(int maxPacketBytes, MqttProtocolHandler mqttProtocolHandler, SslContext sslContext) {
+        this(maxPacketBytes, mqttProtocolHandler, sslContext, LogLevel.DEBUG);
+    }
+
+    public MqttTcpChannelInitializer(int maxPacketBytes, MqttProtocolHandler mqttProtocolHandler,
+                                     SslContext sslContext, LogLevel pipelineLogLevel) {
         this.maxPacketBytes = maxPacketBytes;
         this.mqttProtocolHandler = mqttProtocolHandler;
         this.sslContext = sslContext;
+        this.pipelineLogLevel = pipelineLogLevel != null ? pipelineLogLevel : LogLevel.DEBUG;
     }
 
     @Override
@@ -34,7 +42,7 @@ public class MqttTcpChannelInitializer extends ChannelInitializer<SocketChannel>
         if (sslContext != null) {
             ch.pipeline().addLast("mqttSsl", sslContext.newHandler(ch.alloc()));
         }
-        ch.pipeline().addLast(new LoggingHandler(LogLevel.INFO));
+        ch.pipeline().addLast(new LoggingHandler(pipelineLogLevel));
         ch.pipeline().addLast("mqttFrameDecoder", new MqttFrameDecoder(maxPacketBytes));
         ch.pipeline().addLast("mqttProtocolHandler", mqttProtocolHandler);
     }

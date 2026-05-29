@@ -1,5 +1,5 @@
 import apiClient from './client'
-import type { MonitoringOverview, ConnectionMetrics, MessageMetrics, SubscriptionMetrics, SystemMetrics, HealthStatus, MonitoringSelfMetrics, MonitoringSnapshot, PagedResult, SubscriptionTopicInfo, SubscriberDetail, ClientSubscriptionInfo } from '../types/monitoring'
+import type { MonitoringOverview, ConnectionMetrics, MessageMetrics, SubscriptionMetrics, SystemMetrics, HealthStatus, MonitoringSelfMetrics, MonitoringSnapshot, PagedResult, SubscriptionTopicInfo, SubscriberDetail, ClientSubscriptionInfo, TopicRateLimitOverview, TopicRateLimitStats } from '../types/monitoring'
 
 export function getMonitoringOverview(): Promise<MonitoringOverview> {
   return apiClient.get('/monitoring/overview')
@@ -49,4 +49,12 @@ export function getSubscriptionSubscribers(topicFilter: string): Promise<Subscri
 
 export function getClientSubscriptions(clientId: string): Promise<ClientSubscriptionInfo> {
   return apiClient.get('/monitoring/subscriptions/client', { params: { clientId } })
+}
+
+export function getTopicRateLimits(): Promise<TopicRateLimitOverview> {
+  return apiClient.get('/monitoring/topic-rate-limits')
+}
+
+export function getTopicRateLimitDetail(topic: string): Promise<TopicRateLimitStats> {
+  return apiClient.get(`/monitoring/topic-rate-limits/${encodeURIComponent(topic)}`)
 }

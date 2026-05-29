@@ -54,6 +54,11 @@ const router = createRouter({
       component: () => import('../views/RejectionMessages.vue')
     },
     {
+      path: '/monitoring/topic-rate-limits',
+      name: 'TopicRateLimits',
+      component: () => import('../views/TopicRateLimits.vue')
+    },
+    {
       path: '/alert/rules',
       name: 'AlertRules',
       component: () => import('../views/AlertRules.vue')

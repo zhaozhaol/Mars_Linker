@@ -4,7 +4,8 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.util.AttributeKey;
-import io.netty.util.concurrent.ScheduledFuture;
+import io.netty.util.HashedWheelTimer;
+import io.netty.util.Timeout;
 import org.slf4j.Logger;
 
 import java.nio.charset.StandardCharsets;
@@ -24,7 +25,7 @@ public final class QoS1OutboundService {
             AttributeKey.valueOf("mqtt_outbound_qos1_inflight");
     private static final AttributeKey<ConcurrentHashMap<Integer, Inflight>> OUTBOUND_QOS1_INFLIGHT_MAP =
             AttributeKey.valueOf("mqtt_outbound_qos1_inflight_map");
-    private static final AttributeKey<ScheduledFuture<?>> OUTBOUND_QOS1_RETRANSMIT_TASK =
+    private static final AttributeKey<Timeout> OUTBOUND_QOS1_RETRANSMIT_TASK =
             AttributeKey.valueOf("mqtt_outbound_qos1_retransmit_task");
     private static final AttributeKey<AtomicInteger> NEXT_OUTBOUND_PACKET_ID =
             AttributeKey.valueOf("mqtt_next_outbound_packet_id");
@@ -33,15 +34,18 @@ public final class QoS1OutboundService {
     private final long retransmitIntervalMs;
     private final int retransmitMaxAttempts;
     private final Logger log;
+    private final HashedWheelTimer retransmitTimer;
 
     public QoS1OutboundService(boolean retransmitEnabled,
                         long retransmitIntervalMs,
                         int retransmitMaxAttempts,
-                        Logger log) {
+                        Logger log,
+                        HashedWheelTimer retransmitTimer) {
         this.retransmitEnabled = retransmitEnabled;
         this.retransmitIntervalMs = retransmitIntervalMs;
         this.retransmitMaxAttempts = retransmitMaxAttempts;
         this.log = log;
+        this.retransmitTimer = retransmitTimer;
     }
 
     public void onChannelActive(ChannelHandlerContext ctx) {
@@ -134,19 +138,24 @@ public final class QoS1OutboundService {
         if (ctx.channel().attr(OUTBOUND_QOS1_RETRANSMIT_TASK).get() != null) {
             return;
         }
-        ScheduledFuture<?> f = ctx.executor().scheduleAtFixedRate(
-                () -> retransmitIfNeeded(ctx),
-                retransmitIntervalMs,
-                retransmitIntervalMs,
-                TimeUnit.MILLISECONDS
+        Timeout t = retransmitTimer.newTimeout(
+                timeout -> {
+                    if (timeout.isExpired()) {
+                        retransmitIfNeeded(ctx);
+                    }
+                    if (ctx.channel().isActive()) {
+                        startRetransmitTaskIfNeeded(ctx);
+                    }
+                },
+                retransmitIntervalMs, TimeUnit.MILLISECONDS
         );
-        ctx.channel().attr(OUTBOUND_QOS1_RETRANSMIT_TASK).set(f);
+        ctx.channel().attr(OUTBOUND_QOS1_RETRANSMIT_TASK).set(t);
     }
 
     private void stopRetransmitTask(ChannelHandlerContext ctx) {
-        ScheduledFuture<?> f = ctx.channel().attr(OUTBOUND_QOS1_RETRANSMIT_TASK).get();
-        if (f != null) {
-            f.cancel(false);
+        Timeout t = ctx.channel().attr(OUTBOUND_QOS1_RETRANSMIT_TASK).get();
+        if (t != null) {
+            t.cancel();
             ctx.channel().attr(OUTBOUND_QOS1_RETRANSMIT_TASK).set(null);
         }
     }

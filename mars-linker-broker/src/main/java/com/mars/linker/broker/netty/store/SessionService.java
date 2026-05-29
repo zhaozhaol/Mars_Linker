@@ -25,11 +25,30 @@ public final class SessionService {
 
     public static final class Session {
         public final String clientId;
-        public final Map<String, Integer> subscriptionsQos = new ConcurrentHashMap<>();
+        private final Map<String, Integer> ownedSubscriptionsQos = new ConcurrentHashMap<>();
+        private volatile Map<String, Integer> subscriptionsQosRef = ownedSubscriptionsQos;
         public final Queue<QueuedMessage> offlineQueue = new ConcurrentLinkedQueue<>();
 
         public Session(String clientId) {
             this.clientId = clientId;
+        }
+
+        public Map<String, Integer> subscriptionsQos() {
+            return subscriptionsQosRef;
+        }
+
+        public void bindChannelSubscriptions(Map<String, Integer> channelQosMap) {
+            channelQosMap.putAll(ownedSubscriptionsQos);
+            this.subscriptionsQosRef = channelQosMap;
+        }
+
+        public void unbindChannelSubscriptions() {
+            Map<String, Integer> current = subscriptionsQosRef;
+            if (current != ownedSubscriptionsQos) {
+                ownedSubscriptionsQos.clear();
+                ownedSubscriptionsQos.putAll(current);
+                this.subscriptionsQosRef = ownedSubscriptionsQos;
+            }
         }
     }
 
@@ -54,7 +73,8 @@ public final class SessionService {
     }
 
     private final SessionStore store;
-    private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>(16384);
+    private final ConcurrentHashMap<String, Session> offlineSessions = new ConcurrentHashMap<>(4096);
     private final int offlineMaxMessages;
     private final long offlineTtlMs;
     private final ScheduledExecutorService persistExecutor;
@@ -123,6 +143,25 @@ public final class SessionService {
 
     public Collection<Session> allSessions() {
         return sessions.values();
+    }
+
+    public Collection<Session> offlineSessions() {
+        return offlineSessions.values();
+    }
+
+    public void markOffline(String clientId) {
+        Session s = sessions.get(clientId);
+        if (s != null && !s.subscriptionsQos().isEmpty()) {
+            offlineSessions.put(clientId, s);
+        }
+    }
+
+    public void markOnline(String clientId) {
+        offlineSessions.remove(clientId);
+    }
+
+    public int offlineSessionCount() {
+        return offlineSessions.size();
     }
 
     public void persist() {

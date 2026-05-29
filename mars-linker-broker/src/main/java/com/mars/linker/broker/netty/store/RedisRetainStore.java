@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Redis 版 RetainStore。
+ * Redis 版 RetainStore（Lettuce 单连接，线程安全，无需 synchronized）。
  */
 public final class RedisRetainStore implements RetainStore {
     private static final Logger log = LoggerFactory.getLogger(RedisRetainStore.class);
@@ -29,11 +29,12 @@ public final class RedisRetainStore implements RetainStore {
         this.cmd = connection.sync();
         String p = keyPrefix == null || keyPrefix.trim().isEmpty() ? "ml" : keyPrefix.trim();
         this.retainKey = p + ":retain";
-        this.cmd.ping(); // fail-fast: 验证 Redis 连接可用
+        this.cmd.ping();
+        log.info("RedisRetainStore 初始化完成（Lettuce 单连接，线程安全）");
     }
 
     @Override
-    public synchronized void put(String topic, byte[] payload, int qos) {
+    public void put(String topic, byte[] payload, int qos) {
         if (topic == null || payload == null) {
             return;
         }
@@ -42,7 +43,7 @@ public final class RedisRetainStore implements RetainStore {
     }
 
     @Override
-    public synchronized void remove(String topic) {
+    public void remove(String topic) {
         if (topic == null) {
             return;
         }
@@ -50,7 +51,7 @@ public final class RedisRetainStore implements RetainStore {
     }
 
     @Override
-    public synchronized List<RetainedMessage> list() {
+    public List<RetainedMessage> list() {
         List<RetainedMessage> out = new ArrayList<>();
         try {
             Map<String, String> all = cmd.hgetall(retainKey);
@@ -84,7 +85,7 @@ public final class RedisRetainStore implements RetainStore {
     }
 
     @Override
-    public synchronized void close() {
+    public void close() {
         try {
             connection.close();
         } catch (RuntimeException e) {
@@ -97,4 +98,3 @@ public final class RedisRetainStore implements RetainStore {
         }
     }
 }
-

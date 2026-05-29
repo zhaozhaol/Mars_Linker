@@ -3,6 +3,9 @@ package com.mars.linker.broker.ui.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * UI 管理模块配置。
  */
@@ -80,6 +83,15 @@ public class MarsLinkerUiProperties {
     /** 管理员密码。 */
     private String adminPassword = "admin";
 
+    /** CORS 允许来源列表，为空时拒绝所有跨域请求。 */
+    private List<String> corsAllowedOrigins = new ArrayList<>();
+
+    /** SSE 连接超时时间（分钟），默认 30 分钟。 */
+    private int sseTimeoutMinutes = 30;
+
+    /** SSE 心跳保活间隔（秒），默认 900 秒（15 分钟）。 */
+    private int sseKeepaliveIntervalSeconds = 900;
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -154,4 +166,13 @@ public class MarsLinkerUiProperties {
     public void setAdminUsername(String adminUsername) { this.adminUsername = adminUsername; }
     public String getAdminPassword() { return adminPassword; }
     public void setAdminPassword(String adminPassword) { this.adminPassword = adminPassword; }
+
+    public List<String> getCorsAllowedOrigins() { return corsAllowedOrigins; }
+    public void setCorsAllowedOrigins(List<String> corsAllowedOrigins) { this.corsAllowedOrigins = corsAllowedOrigins; }
+
+    public int getSseTimeoutMinutes() { return sseTimeoutMinutes; }
+    public void setSseTimeoutMinutes(int sseTimeoutMinutes) { this.sseTimeoutMinutes = sseTimeoutMinutes; }
+
+    public int getSseKeepaliveIntervalSeconds() { return sseKeepaliveIntervalSeconds; }
+    public void setSseKeepaliveIntervalSeconds(int sseKeepaliveIntervalSeconds) { this.sseKeepaliveIntervalSeconds = sseKeepaliveIntervalSeconds; }
 }

@@ -6,6 +6,7 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelOption;
+import io.netty.channel.WriteBufferWaterMark;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
@@ -22,6 +23,7 @@ import java.util.Collections;
 import java.util.concurrent.TimeUnit;
 import java.io.File;
 import com.mars.linker.broker.netty.protocol.EventNotifyRouter;
+import com.mars.linker.broker.netty.protocol.TopicRateLimiter;
 import com.mars.linker.broker.netty.acl.AclProviderFactory;
 import com.mars.linker.broker.netty.auth.AuthProviderFactory;
 import com.mars.linker.broker.netty.store.RetainStore;
@@ -94,6 +96,12 @@ public class NettyMqttBrokerServer implements SmartLifecycle {
                 this.retainStore,
                 eventNotifyRouter
         );
+        TopicRateLimiter rateLimiter = this.mqttProtocolHandler.getTopicRateLimiter();
+        rateLimiter.configure(
+                properties.getTopicRateLimits(),
+                properties.getTopicRateLimitDefaultStrategy(),
+                properties.getTopicRateLimitStrategies()
+        );
         this.sslContext = buildServerSslContextIfNeeded(properties);
     }
 
@@ -121,6 +129,7 @@ public class NettyMqttBrokerServer implements SmartLifecycle {
                 .channel(NioServerSocketChannel.class)
                 .option(ChannelOption.SO_BACKLOG, properties.getSoBacklog())
                 .childOption(ChannelOption.SO_KEEPALIVE, true)
+                .childOption(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(32 * 1024, 64 * 1024))
                 .childHandler(new MqttTcpChannelInitializer(properties.getMaxPacketBytes(), mqttProtocolHandler, sslContext));
 
         ChannelFuture bindFuture = bootstrap.bind(listenPort).syncUninterruptibly();
@@ -154,6 +163,7 @@ public class NettyMqttBrokerServer implements SmartLifecycle {
         }
         running = false;
         try {
+            mqttProtocolHandler.markServerShutdown();
             if (serverChannel != null) {
                 serverChannel.close().syncUninterruptibly();
                 serverChannel = null;

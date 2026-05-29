@@ -3,11 +3,15 @@
     <div class="form-fields">
       <div class="field">
         <label class="field-label">类型</label>
-        <input v-model="form.type" class="field-input" placeholder="custom" />
+        <el-select v-model="form.type" class="field-select" filterable allow-create default-first-option>
+          <el-option v-for="t in typeOptions" :key="t" :label="t" :value="t" />
+        </el-select>
       </div>
       <div class="field">
         <label class="field-label">来源</label>
-        <input v-model="form.source" class="field-input" placeholder="ui" />
+        <el-select v-model="form.source" class="field-select" filterable allow-create default-first-option>
+          <el-option v-for="s in sourceOptions" :key="s" :label="s" :value="s" />
+        </el-select>
       </div>
       <div class="field flex-1">
         <label class="field-label">负载</label>
@@ -26,6 +30,9 @@ import { reactive } from 'vue'
 defineProps<{ submitting: boolean }>()
 const emit = defineEmits<{ submit: [form: { type: string; source: string; payload: string }] }>()
 
+const typeOptions = ['custom', 'alert', 'metric', 'lifecycle', 'config', 'debug']
+const sourceOptions = ['ui', 'api', 'mqtt', 'system', 'scheduler', 'webhook']
+
 const form = reactive({ type: 'custom', source: 'ui', payload: '' })
 
 const handleSubmit = () => {
@@ -39,6 +46,7 @@ const handleSubmit = () => {
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field.flex-1 { flex: 1; }
 .field-label { font-size: 11px; color: #8c8c9a; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+.field-select { width: 150px; }
 .field-input {
   padding: 8px 12px;
   border: 1.5px solid #e0e0ec;

@@ -1,6 +1,7 @@
 package com.mars.linker.broker.ui.monitoring.isolation;
 
 import com.mars.linker.broker.netty.MqttProtocolHandler;
+import com.mars.linker.broker.netty.trace.NamedThreadFactory;
 import com.mars.linker.broker.ui.config.MarsLinkerUiProperties;
 import com.mars.linker.broker.ui.monitoring.SubscriptionDetailService;
 import com.mars.linker.broker.ui.monitoring.sampling.SampleRateFilter;
@@ -27,11 +28,7 @@ public class MonitoringThreadPoolConfig {
                 coreSize, coreSize,
                 0L, TimeUnit.MILLISECONDS,
                 new LinkedBlockingQueue<>(1024),
-                r -> {
-                    Thread t = new Thread(r, "monitoring-" + System.currentTimeMillis());
-                    t.setDaemon(true);
-                    return t;
-                },
+                new NamedThreadFactory("broker-monitor", true),
                 (r, executor) -> {
                     MonitoringFaultBoundary.incrementDiscardCount();
                 }
@@ -45,11 +42,7 @@ public class MonitoringThreadPoolConfig {
                 coreSize, coreSize,
                 0L, TimeUnit.MILLISECONDS,
                 new LinkedBlockingQueue<>(512),
-                r -> {
-                    Thread t = new Thread(r, "monitoring-push-" + System.currentTimeMillis());
-                    t.setDaemon(true);
-                    return t;
-                },
+                new NamedThreadFactory("broker-monitor-push", true),
                 new ThreadPoolExecutor.DiscardOldestPolicy()
         );
     }

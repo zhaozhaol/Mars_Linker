@@ -1,5 +1,6 @@
 package com.mars.linker.broker.netty;
 
+import com.mars.linker.broker.netty.protocol.*;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandler;
@@ -7,7 +8,8 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelId;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.util.AttributeKey;
-import io.netty.util.concurrent.ScheduledFuture;
+import io.netty.util.HashedWheelTimer;
+import io.netty.util.Timeout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -30,15 +32,6 @@ import com.mars.linker.broker.netty.acl.AclProvider;
 import com.mars.linker.broker.netty.acl.PrefixAclProvider;
 import com.mars.linker.broker.netty.auth.AuthProvider;
 import com.mars.linker.broker.netty.auth.StaticAuthProvider;
-import com.mars.linker.broker.netty.protocol.DeviceLifecyclePublisher;
-import com.mars.linker.broker.netty.protocol.EventNotifyRouter;
-import com.mars.linker.broker.netty.protocol.EventType;
-import com.mars.linker.broker.netty.protocol.PublishRouter;
-import com.mars.linker.broker.netty.protocol.QoS1OutboundService;
-import com.mars.linker.broker.netty.protocol.QoS2InboundService;
-import com.mars.linker.broker.netty.protocol.QoS2OutboundService;
-import com.mars.linker.broker.netty.protocol.SubscriptionRegistry;
-import com.mars.linker.broker.netty.protocol.TopicFilterSupport;
 import com.mars.linker.broker.netty.store.BoundedRetainStore;
 import com.mars.linker.broker.netty.store.FileRetainStore;
 import com.mars.linker.broker.netty.store.RetainStore;
@@ -92,6 +85,17 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
     private final int maxConnections;
     private final AclProvider aclProvider;
     private volatile RejectionMessageCollector rejectionMessageCollector;
+    private volatile boolean serverShuttingDown = false;
+    private final TopicRateLimiter topicRateLimiter;
+    private final HashedWheelTimer keepAliveTimer = new HashedWheelTimer(
+            r -> { Thread t = new Thread(r, "keepalive-checker"); t.setDaemon(true); return t; },
+            1, TimeUnit.SECONDS, 512, true
+    );
+    private final HashedWheelTimer retransmitTimer = new HashedWheelTimer(
+            r -> { Thread t = new Thread(r, "qos-retransmit"); t.setDaemon(true); return t; },
+            1, TimeUnit.SECONDS, 512, true
+    );
+    { keepAliveTimer.start(); retransmitTimer.start(); }
 
     // 指标：使用 LongAdder 作为轻量并发计数器，由 MqttBrokerMetricsBinder 暴露到 Micrometer。
     private final LongAdder METRIC_CONNECTIONS_ACTIVE = new LongAdder();
@@ -281,24 +285,26 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         this.qos1RetransmitMaxAttempts = qos1RetransmitMaxAttempts;
         this.maxConnections = maxConnections;
         this.SUBSCRIPTION_REGISTRY = new SubscriptionRegistry();
-        this.channels = new ConcurrentHashMap<>();
+        this.channels = new ConcurrentHashMap<>(16384);
         this.SESSION_SERVICE = SESSION_SERVICE;
-        this.CLIENT_TO_CHANNEL = new ConcurrentHashMap<>();
-        this.CHANNEL_TO_CLIENT = new ConcurrentHashMap<>();
+        this.CLIENT_TO_CHANNEL = new ConcurrentHashMap<>(16384);
+        this.CHANNEL_TO_CLIENT = new ConcurrentHashMap<>(16384);
         this.RETAIN_STORE = RETAIN_STORE;
         this.activeConnectionCount = new AtomicInteger(0);
         this.qos1Outbound = new QoS1OutboundService(
                 qos1RetransmitEnabled,
                 qos1RetransmitIntervalMs,
                 qos1RetransmitMaxAttempts,
-                log
+                log,
+                retransmitTimer
         );
         this.qos2Outbound = new QoS2OutboundService(
                 qos1RetransmitEnabled,
                 qos1RetransmitIntervalMs,
                 qos1RetransmitMaxAttempts,
                 qos1Outbound,
-                log
+                log,
+                retransmitTimer
         );
         LongConsumer pendingDeltaRecorder = delta -> METRIC_QOS2_IN_PENDING.add(delta);
         this.qos2Inbound = new QoS2InboundService(
@@ -313,7 +319,28 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         );
         this.eventNotifyRouter = eventNotifyRouter != null ? eventNotifyRouter
                 : new EventNotifyRouter(false, Collections.emptyMap(), Collections.emptyList());
+        this.topicRateLimiter = new TopicRateLimiter();
         INSTANCE = this;
+    }
+
+    public MqttProtocolHandler(AuthProvider authProvider,
+                               AclProvider aclProvider,
+                               boolean qos1RetransmitEnabled,
+                               long qos1RetransmitIntervalMs,
+                               int qos1RetransmitMaxAttempts,
+                               int maxConnections,
+                               int inboundQos2PendingMax,
+                               SessionService SESSION_SERVICE,
+                               RetainStore RETAIN_STORE,
+                               EventNotifyRouter eventNotifyRouter,
+                               TopicRateLimiter topicRateLimiter) {
+        this(authProvider, aclProvider, qos1RetransmitEnabled, qos1RetransmitIntervalMs,
+                qos1RetransmitMaxAttempts, maxConnections, inboundQos2PendingMax,
+                SESSION_SERVICE, RETAIN_STORE, eventNotifyRouter);
+    }
+
+    public TopicRateLimiter getTopicRateLimiter() {
+        return topicRateLimiter;
     }
 
     public void setRejectionMessageCollector(RejectionMessageCollector collector) {
@@ -340,7 +367,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         channels.put(ctx.channel().id(), ctx);
         METRIC_CONNECTIONS_ACTIVE.increment();
         session.disconnectReceived(Boolean.FALSE);
-        session.closeReason("connection_lost");
+        session.closeReason(CloseReason.IO_EXCEPTION);
         session.lastPacketAtMs(System.currentTimeMillis());
         qos1Outbound.onChannelActive(ctx);
         qos2Outbound.onChannelActive(ctx);
@@ -363,6 +390,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         channels.put(ctx.channel().id(), ctx);
         session.lastPacketAtMs(System.currentTimeMillis());
         if (!frame.isReadable()) {
+            session.closeReason(CloseReason.PROTOCOL_ERROR);
             closeWithReason(ctx, "empty frame");
             return;
         }
@@ -371,10 +399,12 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         int flags = fixedHeader & 0x0F;
         int remainingLength = readRemainingLength(frame);
         if (remainingLength < 0) {
+            session.closeReason(CloseReason.PROTOCOL_ERROR);
             closeWithReason(ctx, "Remaining Length 解码失败");
             return;
         }
         if (frame.readableBytes() < remainingLength) {
+            session.closeReason(CloseReason.PROTOCOL_ERROR);
             closeWithReason(ctx, "剩余长度与缓冲区不符 remaining=" + remainingLength);
             return;
         }
@@ -389,6 +419,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
 
         // CONNECT 之前不允许其它报文（协议要求先完成会话建立）。
         if (messageType != 1 && !Boolean.TRUE.equals(session.connected())) {
+            session.closeReason(CloseReason.PROTOCOL_ERROR);
             closeWithReason(ctx, "未 CONNECT 收到报文 type=" + messageType);
             return;
         }
@@ -424,10 +455,11 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                 break;
             case 14: // DISCONNECT
                 session.disconnectReceived(Boolean.TRUE);
-                session.closeReason("graceful_disconnect");
-                closeWithReason(ctx, "收到 DISCONNECT");
+                session.closeReason(CloseReason.CLIENT_DISCONNECT);
+                closeWithReason(ctx, CloseReason.CLIENT_DISCONNECT, "收到 DISCONNECT");
                 break;
             default:
+                session.closeReason(CloseReason.PROTOCOL_ERROR);
                 // 未支持类型直接关闭，避免半实现语义与现网不一致且难以排查。
                 closeWithReason(ctx, "未支持的消息类型 type=" + messageType);
                 break;
@@ -442,8 +474,10 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                 ctx.channel().remoteAddress());
 
         // Will 发布：仅在“已 CONNECT + 非正常断开（未收到 DISCONNECT）”时触发。
-        if (Boolean.TRUE.equals(session.connected())
-                && !Boolean.TRUE.equals(session.disconnectReceived())) {
+        // 遵循 MQTT 3.1.1 规范：主动 DISCONNECT、踢旧连接、服务端 Shutdown 不发布遗嘱。
+        CloseReason closeReason = session.closeReason();
+        boolean shouldPublishWill = closeReason != null && closeReason.shouldPublishWill();
+        if (Boolean.TRUE.equals(session.connected()) && shouldPublishWill) {
             String willTopic = session.willTopic();
             byte[] willPayload = session.willPayload();
             Integer willQos = session.willQos();
@@ -468,8 +502,8 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         }
         if (Boolean.TRUE.equals(session.connected())) {
             String clientId = session.clientId();
-            String reason = session.closeReason();
-            String disconnectReason = reason != null ? reason : "connection_lost";
+            CloseReason reasonEnum = session.closeReason();
+            String disconnectReason = reasonEnum != null ? reasonEnum.name() : "connection_lost";
             notifyEvent(ctx, EventType.DISCONNECTED, clientId, disconnectReason, null);
         }
 
@@ -481,6 +515,14 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                 SESSION_SERVICE.remove(clientId);
                 CLIENT_TO_CHANNEL.remove(clientId);
                 notifyEvent(ctx, EventType.SESSION_DESTROYED, clientId, "session_destroy", null);
+            }
+        } else {
+            if (clientId != null) {
+                SessionService.Session s = SESSION_SERVICE.get(clientId);
+                if (s != null) {
+                    s.unbindChannelSubscriptions();
+                }
+                SESSION_SERVICE.markOffline(clientId);
             }
         }
         if (channels.remove(ctx.channel().id()) != null) {
@@ -631,6 +673,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
 
         boolean authOk = authProvider.authenticate(clientId, username, password);
         if (!authOk) {
+            session.closeReason(CloseReason.AUTH_FAILED);
             log.warn("CONNECT refused reason=auth_failed clientId={} username={} channelId={} remote={}",
                     clientId, username, ctx.channel().id().asShortText(), ctx.channel().remoteAddress());
             notifyEvent(ctx, EventType.CONNECT_REFUSED, clientId, "auth_failed", null);
@@ -659,25 +702,26 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
             if (oldCtx != null && oldCtx.channel().isActive()) {
                 log.warn("clientId={} 已存在旧连接，关闭旧连接 oldChannelId={} newChannelId={}",
                         clientId, oldChannelId.asShortText(), ctx.channel().id().asShortText());
-                ClientSessionContext.of(oldCtx).closeReason("kicked_by_new_connection");
+                ClientSessionContext.of(oldCtx).closeReason(CloseReason.KICKED_BY_NEW_CONNECTION);
                 notifyEvent(oldCtx, EventType.CONNECTION_KICKED, clientId, "kicked_by_new_connection", null);
                 oldCtx.close();
             }
         }
 
         SessionService.Session persistedSession = SESSION_SERVICE.getOrCreate(clientId);
+        SESSION_SERVICE.markOnline(clientId);
         notifyEvent(ctx, EventType.SESSION_CREATED, clientId, "session_create", null);
         boolean sessionPresent = !cleanSession && SESSION_SERVICE.get(clientId) != null
-                && !persistedSession.subscriptionsQos.isEmpty();
+                && !persistedSession.subscriptionsQos().isEmpty();
         if (cleanSession) {
-            persistedSession.subscriptionsQos.clear();
+            persistedSession.subscriptionsQos().clear();
             persistedSession.offlineQueue.clear();
             SESSION_SERVICE.persist(clientId);
         } else {
-            for (Map.Entry<String, Integer> e : persistedSession.subscriptionsQos.entrySet()) {
+            for (Map.Entry<String, Integer> e : persistedSession.subscriptionsQos().entrySet()) {
                 addSubscription(ctx.channel().id(), e.getKey(), e.getValue() == null ? 0 : e.getValue());
             }
-            if (!persistedSession.subscriptionsQos.isEmpty()) {
+            if (!persistedSession.subscriptionsQos().isEmpty()) {
                 sessionPresent = true;
             }
         }
@@ -912,6 +956,20 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
             closeWithReason(ctx, "ACL 拒绝 PUBLISH topic=" + topic);
             return;
         }
+        if (topicRateLimiter != null && topicRateLimiter.hasLimit(topic)) {
+            if (!topicRateLimiter.tryAcquire(topic)) {
+                String rlStrategy = topicRateLimiter.getStrategy(topic);
+                com.mars.linker.broker.netty.trace.StructuredLogger.warn(
+                        "RATE_LIMIT", session.clientId(), "topic_rate_limited",
+                        0, "REJECTED", "topic=" + topic + " strategy=" + rlStrategy);
+                if ("disconnect".equals(rlStrategy)) {
+                    closeWithReason(ctx, CloseReason.TOPIC_RATE_LIMITED,
+                            "主题速率超限 topic=" + topic);
+                    return;
+                }
+                return;
+            }
+        }
         if (topic.startsWith(DELAYED_TOPIC_PREFIX) && parseDelayedTopic(topic) == null) {
             closeWithReason(ctx, "DELAYED topic 非法 topic=" + topic);
             return;
@@ -1126,20 +1184,38 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
             return;
         }
         long checkIntervalMs = Math.max(1_000L, Math.min(5_000L, keepAliveSeconds * 500L));
-        ScheduledFuture<?> f = ctx.executor().scheduleAtFixedRate(
-                () -> checkKeepAliveTimeout(ctx, keepAliveSeconds),
-                checkIntervalMs,
-                checkIntervalMs,
-                TimeUnit.MILLISECONDS
+        Timeout t = keepAliveTimer.newTimeout(
+                timeout -> {
+                    if (timeout.isExpired()) {
+                        checkKeepAliveTimeout(ctx, keepAliveSeconds);
+                    }
+                    if (ctx.channel().isActive()) {
+                        startKeepAliveTaskIfNeeded(ctx, keepAliveSeconds);
+                    }
+                },
+                checkIntervalMs, TimeUnit.MILLISECONDS
         );
-        session.keepAliveTask(f);
+        session.keepAliveTask(t);
+    }
+
+    /**
+     * 标记服务端正在关闭，所有连接将设置 CloseReason.SERVER_SHUTDOWN，不发布遗嘱消息。
+     */
+    public void markServerShutdown() {
+        serverShuttingDown = true;
+        for (ChannelHandlerContext ctx : channels.values()) {
+            if (ctx.channel().isActive()) {
+                ClientSessionContext.of(ctx).closeReason(CloseReason.SERVER_SHUTDOWN);
+            }
+        }
+        log.info("已标记所有活跃连接为 SERVER_SHUTDOWN，不发布遗嘱消息");
     }
 
     private void stopKeepAliveTask(ChannelHandlerContext ctx) {
         ClientSessionContext session = ClientSessionContext.of(ctx);
-        ScheduledFuture<?> f = session.keepAliveTask();
-        if (f != null) {
-            f.cancel(false);
+        Timeout t = session.keepAliveTask();
+        if (t != null) {
+            t.cancel();
             session.keepAliveTask(null);
         }
     }
@@ -1157,8 +1233,8 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         long idleMs = now - last;
         long timeoutMs = keepAliveSeconds * 1500L;
         if (idleMs > timeoutMs) {
-            session.closeReason("keepalive_timeout");
-            closeWithReason(ctx, "keepAlive 超时 idleMs=" + idleMs + " timeoutMs=" + timeoutMs);
+            session.closeReason(CloseReason.KEEPALIVE_TIMEOUT);
+            closeWithReason(ctx, CloseReason.KEEPALIVE_TIMEOUT, "keepAlive 超时 idleMs=" + idleMs + " timeoutMs=" + timeoutMs);
         }
     }
 
@@ -1314,7 +1390,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         if (ctx == null || !ctx.channel().isActive()) {
             return false;
         }
-        ClientSessionContext.of(ctx).closeReason(reason != null ? reason : "kicked_by_admin");
+        ClientSessionContext.of(ctx).closeReason(CloseReason.KICKED_BY_NEW_CONNECTION);
         ctx.close();
         return true;
     }
@@ -1388,7 +1464,9 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         String clientId = ClientSessionContext.of(c).clientId();
         if (clientId != null) {
             SessionService.Session persistedSession = SESSION_SERVICE.getOrCreate(clientId);
-            persistedSession.subscriptionsQos.put(topicFilter, grantedQos);
+            if (persistedSession.subscriptionsQos() != qosMap) {
+                persistedSession.bindChannelSubscriptions(qosMap);
+            }
             SESSION_SERVICE.persist(clientId);
         }
     }
@@ -1418,11 +1496,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
             }
             String clientId = ClientSessionContext.of(channelCtx).clientId();
             if (clientId != null) {
-                SessionService.Session s = SESSION_SERVICE.get(clientId);
-                if (s != null) {
-                    s.subscriptionsQos.remove(topicFilter);
-                    SESSION_SERVICE.persist(clientId);
-                }
+                SESSION_SERVICE.persist(clientId);
             }
         }
         return removed;
@@ -1446,19 +1520,19 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         }
         String clientId = ClientSessionContext.of(channelCtx).clientId();
         if (clientId != null) {
-            SessionService.Session s = SESSION_SERVICE.get(clientId);
-            if (s != null) {
-                s.subscriptionsQos.clear();
-                SESSION_SERVICE.persist(clientId);
-            }
+            SESSION_SERVICE.persist(clientId);
         }
         filters.clear();
         log.debug("已清理订阅 channelId={} 主题数已置空", channelId.asShortText());
     }
 
     private void writeConnAckAndClose(ChannelHandlerContext ctx, int returnCode) {
-        log.warn("CONNECT 拒绝 returnCode=0x{} channelId={}",
-                Integer.toHexString(returnCode & 0xFF), ctx.channel().id().asShortText());
+        ClientSessionContext session = ClientSessionContext.of(ctx);
+        if (session.closeReason() == null) {
+            session.closeReason(returnCode == 0x05 ? CloseReason.AUTH_FAILED : CloseReason.PROTOCOL_VIOLATION);
+        }
+        log.warn("CONNECT 拒绝 returnCode=0x{} reason={} channelId={}",
+                Integer.toHexString(returnCode & 0xFF), session.closeReason().name(), ctx.channel().id().asShortText());
         Integer level = ClientSessionContext.of(ctx).protocolLevel();
         boolean mqtt5 = level != null && level == 0x05;
         ByteBuf connAck;
@@ -1488,8 +1562,19 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
     }
 
     private void closeWithReason(ChannelHandlerContext ctx, String reason) {
-        log.warn("关闭连接: {} remote={} channelId={}",
-                reason, ctx.channel().remoteAddress(), ctx.channel().id().asShortText());
+        ClientSessionContext session = ClientSessionContext.of(ctx);
+        if (session.closeReason() == null) {
+            session.closeReason(CloseReason.PROTOCOL_ERROR);
+        }
+        log.warn("关闭连接: {} reason={} remote={} channelId={}",
+                reason, session.closeReason().name(), ctx.channel().remoteAddress(), ctx.channel().id().asShortText());
+        ctx.close();
+    }
+
+    private void closeWithReason(ChannelHandlerContext ctx, CloseReason closeReason, String detail) {
+        ClientSessionContext.of(ctx).closeReason(closeReason);
+        log.warn("关闭连接: {} reason={} remote={} channelId={}",
+                detail, closeReason.name(), ctx.channel().remoteAddress(), ctx.channel().id().asShortText());
         ctx.close();
     }
 
@@ -1566,7 +1651,14 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        log.warn("Netty exceptionCaught，关闭连接 channelId={} remote={}",
+        ClientSessionContext session = ClientSessionContext.of(ctx);
+        if (cause instanceof java.io.IOException) {
+            session.closeReason(CloseReason.IO_EXCEPTION);
+        } else {
+            session.closeReason(CloseReason.CHANNEL_EXCEPTION);
+        }
+        log.warn("Netty exceptionCaught，关闭连接 reason={} channelId={} remote={}",
+                session.closeReason().name(),
                 ctx.channel().id().asShortText(),
                 ctx.channel().remoteAddress(),
                 cause);

@@ -21,11 +21,12 @@ public final class SubscriptionRegistry {
         public boolean isActive(ChannelId channelId);
     }
 
-    private final Map<String, CopyOnWriteArraySet<ChannelId>> exactTopicSubscribers = new ConcurrentHashMap<>();
-    private final Map<String, CopyOnWriteArraySet<ChannelId>> wildcardSubscribers = new ConcurrentHashMap<>();
+    private final Map<String, CopyOnWriteArraySet<ChannelId>> exactTopicSubscribers = new ConcurrentHashMap<>(4096);
+    private final Map<String, CopyOnWriteArraySet<ChannelId>> wildcardSubscribers = new ConcurrentHashMap<>(256);
     private final TopicFilterSupport.TopicFilterIndex wildcardFilterIndex = new TopicFilterSupport.TopicFilterIndex();
-    private final Map<String, Map<String, CopyOnWriteArraySet<ChannelId>>> shareSubscribers = new ConcurrentHashMap<>();
-    private final Map<String, AtomicInteger> shareRoundRobin = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, CopyOnWriteArraySet<ChannelId>>> shareSubscribers = new ConcurrentHashMap<>(64);
+    private final Map<String, AtomicInteger> shareRoundRobin = new ConcurrentHashMap<>(64);
+    private final AtomicInteger cachedSubscriptionTotal = new AtomicInteger(0);
 
     public void add(ChannelId channelId, String topicFilter) {
         if (TopicFilterSupport.isShareSubscription(topicFilter)) {
@@ -37,14 +38,17 @@ public final class SubscriptionRegistry {
                     .computeIfAbsent(ss.group, k -> new ConcurrentHashMap<>())
                     .computeIfAbsent(ss.filter, k -> new CopyOnWriteArraySet<>())
                     .add(channelId);
+            cachedSubscriptionTotal.incrementAndGet();
             return;
         }
         if (TopicFilterSupport.isExactTopic(topicFilter)) {
             exactTopicSubscribers.computeIfAbsent(topicFilter, k -> new CopyOnWriteArraySet<>()).add(channelId);
+            cachedSubscriptionTotal.incrementAndGet();
             return;
         }
         wildcardSubscribers.computeIfAbsent(topicFilter, k -> new CopyOnWriteArraySet<>()).add(channelId);
         wildcardFilterIndex.add(topicFilter);
+        cachedSubscriptionTotal.incrementAndGet();
     }
 
     public boolean remove(ChannelId channelId, String topicFilter) {
@@ -58,10 +62,10 @@ public final class SubscriptionRegistry {
             shareSubscribers.computeIfPresent(ss.group, (group, filterMap) -> {
                 filterMap.computeIfPresent(ss.filter, (filter, subscribers) -> {
                     r[0] = subscribers.remove(channelId);
-                    return subscribers.isEmpty() ? null : subscribers;
-                });
+                    return subscribers.isEmpty() ? null : subscribers;                });
                 return filterMap.isEmpty() ? null : filterMap;
             });
+            if (r[0]) cachedSubscriptionTotal.decrementAndGet();
             return r[0];
         }
         Map<String, CopyOnWriteArraySet<ChannelId>> target = TopicFilterSupport.isExactTopic(topicFilter)
@@ -78,6 +82,7 @@ public final class SubscriptionRegistry {
             }
             return subscribers;
         });
+        if (r[0]) cachedSubscriptionTotal.decrementAndGet();
         return r[0];
     }
 
@@ -140,22 +145,11 @@ public final class SubscriptionRegistry {
         wildcardFilterIndex.clear();
         shareSubscribers.clear();
         shareRoundRobin.clear();
+        cachedSubscriptionTotal.set(0);
     }
 
     public int subscriptionTotal() {
-        int total = 0;
-        for (Set<ChannelId> subs : exactTopicSubscribers.values()) {
-            total += subs.size();
-        }
-        for (Set<ChannelId> subs : wildcardSubscribers.values()) {
-            total += subs.size();
-        }
-        for (Map<String, CopyOnWriteArraySet<ChannelId>> group : shareSubscribers.values()) {
-            for (Set<ChannelId> subs : group.values()) {
-                total += subs.size();
-            }
-        }
-        return total;
+        return cachedSubscriptionTotal.get();
     }
 
     public int topicCount() {

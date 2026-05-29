@@ -130,3 +130,17 @@ export interface ClientSubscriptionInfo {
   clientId: string
   subscriptions: SubscriptionTopicInfo[]
 }
+
+export interface TopicRateLimitStats {
+  topic: string
+  maxPerSecond: number
+  availableTokens: number
+  allowedCount: number
+  rejectedCount: number
+  strategy: string
+}
+
+export interface TopicRateLimitOverview {
+  rules: number
+  stats: Record<string, TopicRateLimitStats>
+}

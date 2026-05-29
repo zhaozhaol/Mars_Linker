@@ -71,7 +71,7 @@ public final class FileSessionStore implements SessionStore {
                                 && !TopicFilterSupport.isExactTopic(filter)) {
                             return;
                         }
-                        session.subscriptionsQos.put(filter, qos);
+                        session.subscriptionsQos().put(filter, qos);
                     } catch (NumberFormatException ignored) {
                     }
                 } else if ("MSG".equals(kind) && p.length >= 6) {
@@ -124,7 +124,7 @@ public final class FileSessionStore implements SessionStore {
                 if (s == null) {
                     continue;
                 }
-                for (Map.Entry<String, Integer> sub : s.subscriptionsQos.entrySet()) {
+                for (Map.Entry<String, Integer> sub : s.subscriptionsQos().entrySet()) {
                     lines.add("SUB\t" + s.clientId + "\t" + sub.getKey() + "\t" + (sub.getValue() == null ? 0 : sub.getValue()));
                 }
                 for (SessionService.QueuedMessage q : s.offlineQueue) {

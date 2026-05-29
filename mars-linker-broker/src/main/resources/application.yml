@@ -3,117 +3,184 @@ spring:
     name: mars-linker-broker
 
 server:
-  port: 11884
+  port: 11884                    # Spring Boot HTTP 端口（管理面 API + 静态资源）
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus
+        include: health,info,prometheus  # Actuator 暴露端点
   endpoint:
     health:
-      show-details: when_authorized
+      show-details: when_authorized      # 健康详情仅授权用户可见
 
-# 自研 Broker（阶段 2 起实现 Netty）；默认关闭以免占用端口
+# ============================================================
+# Mars Linker Broker 配置
+# ============================================================
 mars:
   linker:
     broker:
-      netty-enabled: true
-      tcp-port: 11883
-      boss-threads: 1
-      worker-threads: 0
-      max-packet-bytes: 262144
-      so-backlog: 1024
+      # --- Netty 网络层 ---
+      netty-enabled: true              # Netty MQTT Broker 总开关；false 时不监听 TCP 端口
+      tcp-port: 11883                  # MQTT TCP 监听端口
+      boss-threads: 1                  # Netty Boss 线程数（负责 accept，通常 1 即可）
+      worker-threads: 0                # Netty Worker 线程数；0 表示 CPU核数×2（10K+连接建议≥32）
+      max-packet-bytes: 16384          # 单个 MQTT 报文最大字节数（16KB），超限连接关闭；IoT场景通常<1KB，16KB兼顾大报文与内存
+      so-backlog: 1024                 # TCP SYN 半连接队列长度
+      max-connections: 11000            # 最大并发连接数；0 表示不限制（生产建议设上限防 OOM）
+      inbound-qos2-pending-max: 65536  # 入站 QoS2 待完成 PUBREC 上限
+
       # --- 鉴权配置 ---
-      auth-enabled: true          # 开启鉴权（默认关闭）
-      auth-username: zytxmq  # 账号
-      auth-password: mq1890Q*86Y&n  # 密码
-      auth-mode: static           # static(本地) 或 http(远程鉴权)
+      auth-enabled: true               # 开启用户名密码鉴权；false 时任意 clientId 可连接
+      auth-username: zytxmq            # 鉴权账号（auth-mode=static 时生效）
+      auth-password: mq1890Q*86Y&n     # 鉴权密码（auth-mode=static 时生效）
+      auth-mode: static                # 鉴权模式：static(本地匹配) / http(远程HTTP鉴权)
+      auth-http-url: ""                # HTTP 鉴权服务 URL（auth-mode=http 时必填，POST clientId/username/password）
+      auth-thread-pool-size: 0         # 异步鉴权线程池核心线程数；0 表示 CPU×2（auth-mode=http 时生效）
+      auth-thread-pool-queue-capacity: 1000  # 异步鉴权线程池队列容量；满时新请求快速失败
+      auth-http-timeout-ms: 5000       # HTTP 鉴权异步超时（毫秒），超时返回 CONNACK 0x03
+
       # --- 存储模式配置 ---
-      storage-enabled: true              # 持久化总开关：false 时仅内存运行
-      storage-mode: file                 # file(默认) / redis / db（仅 storage-enabled=true 生效）
-      storage-migrate-on-startup: false  # 启动时从 file 迁移到目标存储（仅 mode!=file 且 storage-enabled=true）
+      storage-enabled: true            # 持久化总开关；false 时仅内存运行，重启数据丢失
+      storage-mode: file               # 存储模式：file(本地文件) / redis / db
+      storage-migrate-on-startup: false # 启动时从 file 迁移到目标存储（仅 mode!=file 且 storage-enabled=true）
       # storage-redis-address: localhost:6379  # Redis 地址（mode=redis 时必填）
       # storage-redis-password:               # Redis 密码（可选）
-      # storage-redis-database: 0             # Redis 数据库编号
-      # storage-redis-timeout-ms: 3000        # Redis 超时（毫秒）
+      # storage-redis-database: 0             # Redis 数据库编号（0-15）
+      # storage-redis-timeout-ms: 3000        # Redis 命令超时（毫秒）
       # storage-redis-key-prefix: ml          # Redis key 前缀
       # storage-db-jdbc-url: jdbc:postgresql://localhost:5432/mars_linker  # JDBC URL（mode=db 时必填）
       # storage-db-username: postgres         # DB 用户名
       # storage-db-password:                  # DB 密码
       # storage-db-schema: public             # DB schema
       # storage-db-table-prefix: ml_          # DB 表名前缀
-      session-offline-max-messages: 5000      # 每个 client 离线消息上限（<=0 不限）
-      session-offline-ttl-ms: 604800000       # 离线消息保留时长（毫秒，7天，<=0 不过期）
-      retain-max-messages: 200000             # retain 总量上限（<=0 不限）
-      retain-ttl-ms: 2592000000               # retain 保留时长（毫秒，30天，<=0 不过期）
-      acl-enabled: false
-      acl-default-deny: false
-      acl-allow-subscribe-prefixes: []
-      acl-allow-publish-prefixes: []
-      acl-deny-subscribe-prefixes: []
-      acl-deny-publish-prefixes: []
-      # --- 事件通知配置（新配置体系） ---
-      event-notify-enabled: true    # 事件通知总开关
-      # event-notify-default-forward-rules:          # 全局默认转发规则（未配置独立规则的事件类型继承此规则）
+
+      # --- DB 连接池配置（mode=db 时生效）---
+      db-pool-min-idle: 2               # 最小空闲连接数
+      db-pool-max-size: 10              # 最大连接数
+      db-pool-connection-timeout-ms: 30000  # 获取连接超时（毫秒）
+      db-pool-idle-timeout-ms: 600000   # 空闲连接超时（毫秒，10分钟）
+      db-pool-max-lifetime-ms: 1800000  # 连接最大生命周期（毫秒，30分钟）
+      db-pool-leak-detection-ms: 60000  # 连接泄漏检测阈值（毫秒）；0 禁用
+
+      # --- QoS 配置 ---
+      qos1-retransmit-enabled: true     # QoS1 重传开关
+      qos1-retransmit-interval-ms: 5000 # QoS1 重传间隔（毫秒）
+      qos1-retransmit-max-attempts: 5   # QoS1 最大重传次数；超限丢弃消息
+
+      # --- Session 与 Retain ---
+      session-offline-max-messages: 5000   # 每个 client 离线消息上限；<=0 不限
+      session-offline-ttl-ms: 604800000    # 离线消息保留时长（毫秒，7天）；<=0 不过期
+      retain-max-messages: 200000          # retain 消息总量上限；<=0 不限
+      retain-ttl-ms: 2592000000            # retain 保留时长（毫秒，30天）；<=0 不过期
+
+      # --- ACL 访问控制 ---
+      acl-enabled: false                # ACL 总开关
+      acl-default-deny: false           # 默认拒绝策略；false=默认允许，true=默认拒绝
+      acl-allow-subscribe-prefixes: []  # 允许订阅的主题前缀列表
+      acl-allow-publish-prefixes: []    # 允许发布的主题前缀列表
+      acl-deny-subscribe-prefixes: []   # 拒绝订阅的主题前缀列表
+      acl-deny-publish-prefixes: []     # 拒绝发布的主题前缀列表
+
+      # --- 主题限流配置 ---
+      # topic-rate-limits: 精确主题消息速率限流规则。
+      #   key 为精确主题名（不支持通配符 # 或 +），value 为每秒最大消息数（msg/s）。
+      #   仅对 PUBLISH 方向生效；仅配置了限流规则的精确主题才限流，其余主题不限。
+      #   示例：sensor/temperature: 100 表示该主题每秒最多通过 100 条 PUBLISH 消息。
+      topic-rate-limits:
+        "topic/default": 1000           # 示例：topic/default 限流 1000 msg/s
+      # topic-rate-limit-default-strategy: 超限时的默认处理策略。
+      #   drop      - 丢弃超限消息，连接保持（仍回复 QoS1/2 ACK 以遵守 MQTT 协议）
+      #   disconnect - 断开发布者连接（设置 CloseReason=TOPIC_RATE_LIMITED，不触发遗嘱消息）
+      topic-rate-limit-default-strategy: drop
+      # topic-rate-limit-strategies: 每主题策略覆盖。
+      #   key 为精确主题名，value 为策略（drop / disconnect），优先级高于 default-strategy。
+      #   未在此配置的主题使用 default-strategy。
+      # topic-rate-limit-strategies:
+      #   alarm/fire: disconnect        # 示例：alarm/fire 超限时断开连接而非丢弃
+
+      # --- 业务链追踪日志 ---
+      trace-id-enabled: true            # traceId 总开关；关闭时不在日志中输出 traceId
+      trace-id-log-fields: "traceId,clientId,operation,durationMs,result"  # 结构化日志输出字段
+
+      # --- 连接管理 ---
+      connection-warn-threshold-ratio: 0.8  # 连接数告警阈值比例；达到 maxConnections 的 80% 时 WARN 日志
+
+      # --- 事件通知配置 ---
+      event-notify-enabled: true        # 事件通知总开关；false 时与标准 MQTT Broker 行为一致
+      # event-notify-default-forward-rules:    # 全局默认转发规则
       #   - match-type: regex_match
       #     expression: "device|gateway"
-      event-notify-config:                           # 按事件类型配置转发行为
-        connected:                                   # 事件类型：连接成功
+      event-notify-config:              # 按事件类型配置转发行为
+        connected:                      # 事件类型：连接成功
           enabled: true
           topic: devices/connected
-          forward-rules:                             # 仅匹配clientId含device的设备
+          forward-rules:                # 仅匹配 clientId 含 device_ 的设备
             - match-type: regex_match
               expression: "device_"
-        disconnected:                                # 事件类型：连接断开
+        disconnected:                   # 事件类型：连接断开
           enabled: true
           topic: devices/disconnected
-          forward-rules:                             # 仅匹配clientId含device的设备
+          forward-rules:
             - match-type: regex_match
               expression: "device_"
-        # connect-refused:                           # 事件类型：连接被拒绝
+        # connect-refused:              # 事件类型：连接被拒绝
         #   enabled: true
-        # subscribed:                                # 事件类型：订阅成功
+        # subscribed:                   # 事件类型：订阅成功
         #   enabled: true
-        # unsubscribed:                              # 事件类型：取消订阅
+        # unsubscribed:                 # 事件类型：取消订阅
         #   enabled: false
-        # session-created:                           # 事件类型：会话创建
+        # session-created:              # 事件类型：会话创建
         #   enabled: true
-        # session-destroyed:                         # 事件类型：会话销毁
+        # session-destroyed:            # 事件类型：会话销毁
         #   enabled: true
-        # will-published:                            # 事件类型：遗嘱消息发布
+        # will-published:               # 事件类型：遗嘱消息发布
         #   enabled: true
-        # connection-kicked:                         # 事件类型：旧连接被踢下线
+        # connection-kicked:            # 事件类型：旧连接被踢下线
         #   enabled: true
-      # --- 旧配置（已废弃，兼容迁移） ---
+
+      # --- 旧配置（已废弃，兼容迁移）---
       # lifecycle-notify-enabled: false
       # lifecycle-connected-topic: devices/connected
       # lifecycle-offline-topic: devices/offline
       # lifecycle-forward-rules: []
-    ui:
-      enabled: true
-      collection-buffer-size: 1000
-      monitor-refresh-ms: 5000
-      connection-enabled: true
-      message-enabled: true
-      subscription-enabled: true
-      system-enabled: true
-      alert-evaluation-enabled: true
-      connection-sample-rate: 1.0
-      message-sample-rate: 1.0
-      subscription-sample-rate: 1.0
-      system-sample-rate: 1.0
-      aggregation-window-ms: 1000
-      max-history-memory-mb: 64
-      monitoring-thread-pool-size: 2
-      push-thread-pool-size: 2
-      max-api-queries-per-second: 30
-      max-push-connections: 50
-      persist-mode: memory
-      admin-username: admin
-      admin-password: admin123
 
+    # ============================================================
+    # 管理面 UI 配置
+    # ============================================================
+    ui:
+      enabled: true                    # UI 总开关；false 时不注册 Web 端点
+      collection-buffer-size: 1000     # 采集事件缓冲区大小
+      monitor-refresh-ms: 5000         # 监控数据采集间隔（毫秒）
+      connection-enabled: true         # 连接指标采集开关
+      message-enabled: true            # 消息指标采集开关
+      subscription-enabled: true       # 订阅指标采集开关
+      system-enabled: true             # 系统指标采集开关
+      alert-evaluation-enabled: true   # 告警评估开关
+      connection-sample-rate: 1.0      # 连接指标采样率（0.0-1.0）
+      message-sample-rate: 1.0         # 消息指标采样率
+      subscription-sample-rate: 1.0    # 订阅指标采样率
+      system-sample-rate: 1.0          # 系统指标采样率
+      aggregation-window-ms: 1000      # 指标聚合窗口（毫秒）
+      max-history-memory-mb: 64        # 历史数据内存上限（MB）
+      monitoring-thread-pool-size: 4   # 监控采集线程池大小（高连接数建议4-8）
+      push-thread-pool-size: 4         # SSE 推送线程池大小
+      max-api-queries-per-second: 30   # API 查询每秒限流
+      max-push-connections: 50         # SSE 最大推送连接数
+      persist-mode: memory             # 持久化模式：memory / file
+      admin-username: admin            # 管理员账号
+      admin-password: admin123         # 管理员密码
+      # jwt-secret-key: change-me-to-a-secure-random-secret-key-32bytes!  # JWT 签名密钥（生产必须更换为 32+ 字节强密钥）
+      # cors-allowed-origins:           # CORS 允许来源列表；为空时默认允许 localhost 开发地址
+      #   - http://localhost:5173
+      #   - http://localhost:11884
+      sse-timeout-minutes: 10          # SSE 连接超时（分钟）；防止客户端不主动断开导致资源泄漏
+      sse-keepalive-interval-seconds: 30  # SSE 心跳保活间隔（秒，30秒，及时检测断开客户端）
+
+# ============================================================
+# 日志配置
+# ============================================================
 logging:
   level:
     root: INFO
-    com.mars.linker.broker: INFO
+    com.mars.linker.broker: INFO       # Broker 包日志级别；DEBUG 可查看详细链路追踪

@@ -107,6 +107,33 @@ public class MarsLinkerMqttBrokerProperties {
     private String storageDbSchema = "public";
     private String storageDbTablePrefix = "ml_";
 
+    /** DB 连接池最小空闲连接数。 */
+    private int dbPoolMinIdle = 2;
+
+    /** DB 连接池最大连接数。 */
+    private int dbPoolMaxSize = 10;
+
+    /** DB 连接池获取连接超时（毫秒）。 */
+    private long dbPoolConnectionTimeoutMs = 30_000L;
+
+    /** DB 连接池空闲连接超时（毫秒）。 */
+    private long dbPoolIdleTimeoutMs = 600_000L;
+
+    /** DB 连接池连接最大生命周期（毫秒）。 */
+    private long dbPoolMaxLifetimeMs = 1_800_000L;
+
+    /** DB 连接池连接泄漏检测阈值（毫秒），0 表示禁用。 */
+    private long dbPoolLeakDetectionMs = 60_000L;
+
+    /** 精确主题消息速率限流配置：key=精确主题, value=每秒最大消息数。通配符主题不适用。 */
+    private java.util.Map<String, Integer> topicRateLimits = new java.util.LinkedHashMap<>();
+
+    /** 限流超限默认策略：drop=丢弃超限消息, disconnect=断开发布者连接。 */
+    private String topicRateLimitDefaultStrategy = "drop";
+
+    /** 每主题限流策略覆盖：key=精确主题, value=策略（drop/disconnect）。 */
+    private java.util.Map<String, String> topicRateLimitStrategies = new java.util.LinkedHashMap<>();
+
     /**
      * 每个 client 持久化离线消息上限；小于等于 0 表示不限制。
      */
@@ -295,6 +322,42 @@ public class MarsLinkerMqttBrokerProperties {
      * 明确拒绝 PUBLISH 的 topic 前缀（命中任意一个立即拒绝，优先级高于 allow）。
      */
     private List<String> aclDenyPublishPrefixes = new ArrayList<>();
+
+    /**
+     * 是否启用业务链追踪（traceId），默认开启。
+     * 关闭时不在日志中输出 traceId，减少开销。
+     */
+    private boolean traceIdEnabled = true;
+
+    /**
+     * 结构化日志输出字段，逗号分隔。
+     * 默认输出全部五个字段：traceId,clientId,operation,durationMs,result。
+     */
+    private String traceIdLogFields = "traceId,clientId,operation,durationMs,result";
+
+    /**
+     * 鉴权线程池大小；0 表示使用 CPU×2。
+     * 仅在 authMode=http 时生效。
+     */
+    private int authThreadPoolSize = 0;
+
+    /**
+     * 鉴权线程池队列容量。
+     * 仅在 authMode=http 时生效；队列满时新鉴权请求快速失败。
+     */
+    private int authThreadPoolQueueCapacity = 1000;
+
+    /**
+     * HTTP 鉴权异步超时（毫秒），超时后返回 CONNACK(0x03 Server Unavailable)。
+     * 仅在 authMode=http 时生效。
+     */
+    private long authHttpTimeoutMs = 5_000L;
+
+    /**
+     * 连接数告警阈值比例（0.0-1.0），达到该比例时输出 WARN 日志。
+     * 默认 0.8，即达到 maxConnections 的 80% 时告警。
+     */
+    private double connectionWarnThresholdRatio = 0.8;
 
     /**
      * 事件通知总开关（默认 false，与标准 MQTT Broker 行为一致）。
@@ -843,4 +906,42 @@ public class MarsLinkerMqttBrokerProperties {
     public void setLifecycleForwardRules(List<ForwardRule> lifecycleForwardRules) {
         this.lifecycleForwardRules = lifecycleForwardRules;
     }
+
+    public boolean isTraceIdEnabled() { return traceIdEnabled; }
+    public void setTraceIdEnabled(boolean traceIdEnabled) { this.traceIdEnabled = traceIdEnabled; }
+
+    public String getTraceIdLogFields() { return traceIdLogFields; }
+    public void setTraceIdLogFields(String traceIdLogFields) { this.traceIdLogFields = traceIdLogFields; }
+
+    public int getAuthThreadPoolSize() { return authThreadPoolSize; }
+    public void setAuthThreadPoolSize(int authThreadPoolSize) { this.authThreadPoolSize = authThreadPoolSize; }
+
+    public int getAuthThreadPoolQueueCapacity() { return authThreadPoolQueueCapacity; }
+    public void setAuthThreadPoolQueueCapacity(int authThreadPoolQueueCapacity) { this.authThreadPoolQueueCapacity = authThreadPoolQueueCapacity; }
+
+    public long getAuthHttpTimeoutMs() { return authHttpTimeoutMs; }
+    public void setAuthHttpTimeoutMs(long authHttpTimeoutMs) { this.authHttpTimeoutMs = authHttpTimeoutMs; }
+
+    public double getConnectionWarnThresholdRatio() { return connectionWarnThresholdRatio; }
+    public void setConnectionWarnThresholdRatio(double connectionWarnThresholdRatio) { this.connectionWarnThresholdRatio = connectionWarnThresholdRatio; }
+
+    public int getDbPoolMinIdle() { return dbPoolMinIdle; }
+    public void setDbPoolMinIdle(int dbPoolMinIdle) { this.dbPoolMinIdle = dbPoolMinIdle; }
+    public int getDbPoolMaxSize() { return dbPoolMaxSize; }
+    public void setDbPoolMaxSize(int dbPoolMaxSize) { this.dbPoolMaxSize = dbPoolMaxSize; }
+    public long getDbPoolConnectionTimeoutMs() { return dbPoolConnectionTimeoutMs; }
+    public void setDbPoolConnectionTimeoutMs(long dbPoolConnectionTimeoutMs) { this.dbPoolConnectionTimeoutMs = dbPoolConnectionTimeoutMs; }
+    public long getDbPoolIdleTimeoutMs() { return dbPoolIdleTimeoutMs; }
+    public void setDbPoolIdleTimeoutMs(long dbPoolIdleTimeoutMs) { this.dbPoolIdleTimeoutMs = dbPoolIdleTimeoutMs; }
+    public long getDbPoolMaxLifetimeMs() { return dbPoolMaxLifetimeMs; }
+    public void setDbPoolMaxLifetimeMs(long dbPoolMaxLifetimeMs) { this.dbPoolMaxLifetimeMs = dbPoolMaxLifetimeMs; }
+    public long getDbPoolLeakDetectionMs() { return dbPoolLeakDetectionMs; }
+    public void setDbPoolLeakDetectionMs(long dbPoolLeakDetectionMs) { this.dbPoolLeakDetectionMs = dbPoolLeakDetectionMs; }
+
+    public java.util.Map<String, Integer> getTopicRateLimits() { return topicRateLimits; }
+    public void setTopicRateLimits(java.util.Map<String, Integer> topicRateLimits) { this.topicRateLimits = topicRateLimits; }
+    public String getTopicRateLimitDefaultStrategy() { return topicRateLimitDefaultStrategy; }
+    public void setTopicRateLimitDefaultStrategy(String topicRateLimitDefaultStrategy) { this.topicRateLimitDefaultStrategy = topicRateLimitDefaultStrategy; }
+    public java.util.Map<String, String> getTopicRateLimitStrategies() { return topicRateLimitStrategies; }
+    public void setTopicRateLimitStrategies(java.util.Map<String, String> topicRateLimitStrategies) { this.topicRateLimitStrategies = topicRateLimitStrategies; }
 }

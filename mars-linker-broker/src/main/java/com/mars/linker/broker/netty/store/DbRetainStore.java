@@ -3,6 +3,7 @@ package com.mars.linker.broker.netty.store;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -13,26 +14,31 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * DB 版 RetainStore。
+ * DB 版 RetainStore，使用连接池。
+ * <p>
+ * 线程安全策略：依赖连接池并发能力，所有方法无需 synchronized。
+ * </p>
  */
 public final class DbRetainStore implements RetainStore {
     private static final Logger log = LoggerFactory.getLogger(DbRetainStore.class);
 
-    private final String jdbcUrl;
-    private final String username;
-    private final String password;
+    private final DataSource dataSource;
     private final String tableRetain;
 
     public DbRetainStore(String jdbcUrl, String username, String password, String schema, String tablePrefix) {
-        this.jdbcUrl = jdbcUrl;
-        this.username = username;
-        this.password = password;
+        this.dataSource = new DbSessionStore.SimpleDriverDataSource(jdbcUrl, username, password);
+        this.tableRetain = DbStoreNaming.prefix(schema, tablePrefix) + "retain";
+        initSchema();
+    }
+
+    public DbRetainStore(DataSource dataSource, String schema, String tablePrefix) {
+        this.dataSource = dataSource;
         this.tableRetain = DbStoreNaming.prefix(schema, tablePrefix) + "retain";
         initSchema();
     }
 
     @Override
-    public synchronized void put(String topic, byte[] payload, int qos) {
+    public void put(String topic, byte[] payload, int qos) {
         if (topic == null || payload == null) {
             return;
         }
@@ -54,7 +60,7 @@ public final class DbRetainStore implements RetainStore {
     }
 
     @Override
-    public synchronized void remove(String topic) {
+    public void remove(String topic) {
         if (topic == null) {
             return;
         }
@@ -68,7 +74,7 @@ public final class DbRetainStore implements RetainStore {
     }
 
     @Override
-    public synchronized List<RetainedMessage> list() {
+    public List<RetainedMessage> list() {
         List<RetainedMessage> out = new ArrayList<>();
         try (Connection c = getConnection();
              PreparedStatement ps = c.prepareStatement("SELECT topic, payload, qos FROM " + tableRetain);
@@ -92,7 +98,6 @@ public final class DbRetainStore implements RetainStore {
     }
 
     private Connection getConnection() throws SQLException {
-        return DriverManager.getConnection(jdbcUrl, username, password);
+        return dataSource.getConnection();
     }
 }
-

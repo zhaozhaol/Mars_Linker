@@ -1,30 +1,36 @@
-package com.mars.linker.broker.ui.monitoring.isolation;
+package com.mars.linker.broker.netty.protocol;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.LongAdder;
 
 /**
- * API 查询限流器（令牌桶，线程安全，无 Guava 依赖）。
+ * 单主题令牌桶限流器，线程安全。
  * <p>
- * 线程安全策略：
- * - refill() 使用 synchronized 保护，消除多线程同时进入 refill 窗口时令牌被重复重置的竞态
+ * 设计决策：
+ * - refill() 使用 synchronized 保护，消除多线程同时 refill 窗口的竞态
  * - tryAcquire() 使用 AtomicInteger CAS 循环保证原子扣减
- * - 拒绝计数器使用 LongAdder 保证高并发下原子计数
+ * - LongAdder 记录通过/拒绝计数，高并发下无锁
  * </p>
  */
-public class ApiRateLimiter {
+public class TokenBucket {
 
     private final AtomicInteger availableTokens;
     private volatile int maxPerSecond;
     private volatile long lastRefillTime;
+    private final LongAdder allowedCount = new LongAdder();
     private final LongAdder rejectedCount = new LongAdder();
 
-    public ApiRateLimiter(int maxPerSecond) {
+    public TokenBucket(int maxPerSecond) {
         this.maxPerSecond = maxPerSecond;
         this.availableTokens = new AtomicInteger(maxPerSecond);
         this.lastRefillTime = System.currentTimeMillis();
     }
 
+    /**
+     * 尝试获取1个令牌。
+     *
+     * @return true 表示允许通过，false 表示超限拒绝
+     */
     public boolean tryAcquire() {
         refill();
         while (true) {
@@ -34,13 +40,10 @@ public class ApiRateLimiter {
                 return false;
             }
             if (availableTokens.compareAndSet(current, current - 1)) {
+                allowedCount.increment();
                 return true;
             }
         }
-    }
-
-    public void updateRate(int newMaxPerSecond) {
-        this.maxPerSecond = newMaxPerSecond;
     }
 
     private synchronized void refill() {
@@ -51,24 +54,17 @@ public class ApiRateLimiter {
         }
     }
 
-    /**
-     * 获取当前可用令牌数。
-     */
-    public int getAvailableTokens() {
-        return availableTokens.get();
+    public void updateRate(int newMaxPerSecond) {
+        this.maxPerSecond = newMaxPerSecond;
     }
 
-    /**
-     * 获取累计拒绝请求数。
-     */
-    public long getRejectedCount() {
-        return rejectedCount.sum();
-    }
+    public int getMaxPerSecond() { return maxPerSecond; }
+    public int getAvailableTokens() { return availableTokens.get(); }
+    public long getAllowedCount() { return allowedCount.sum(); }
+    public long getRejectedCount() { return rejectedCount.sum(); }
 
-    /**
-     * 重置拒绝计数器。
-     */
-    public void resetRejectedCount() {
+    public void resetCounters() {
+        allowedCount.reset();
         rejectedCount.reset();
     }
 }

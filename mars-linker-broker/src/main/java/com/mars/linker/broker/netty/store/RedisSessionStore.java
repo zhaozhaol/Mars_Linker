@@ -17,7 +17,11 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Redis 版 SessionStore（当前以全量快照语义对齐文件实现）。
+ * Redis 版 SessionStore（全量快照语义）。
+ * <p>
+ * 线程安全策略：Lettuce 单连接的同步 API 天然线程安全，无需 synchronized。
+ * 单连接在 Lettuce 中通过内部锁保证命令顺序执行，足以满足 Broker 场景。
+ * </p>
  */
 public final class RedisSessionStore implements SessionStore {
     private static final Logger log = LoggerFactory.getLogger(RedisSessionStore.class);
@@ -32,7 +36,8 @@ public final class RedisSessionStore implements SessionStore {
         this.connection = client.connect();
         this.cmd = connection.sync();
         this.keyPrefix = keyPrefix == null || keyPrefix.trim().isEmpty() ? "ml" : keyPrefix.trim();
-        this.cmd.ping(); // fail-fast: 验证 Redis 连接可用
+        this.cmd.ping();
+        log.info("RedisSessionStore 初始化完成（Lettuce 单连接，线程安全）");
     }
 
     @Override
@@ -41,7 +46,7 @@ public final class RedisSessionStore implements SessionStore {
     }
 
     @Override
-    public synchronized Map<String, SessionService.Session> loadAll() {
+    public Map<String, SessionService.Session> loadAll() {
         Map<String, SessionService.Session> out = new ConcurrentHashMap<>();
         try {
             String indexKey = k("sess:index");
@@ -56,10 +61,9 @@ public final class RedisSessionStore implements SessionStore {
                     try {
                         int qos = Integer.parseInt(e.getValue());
                         if (qos >= 0 && qos <= 2) {
-                            s.subscriptionsQos.put(e.getKey(), qos);
+                            s.subscriptionsQos().put(e.getKey(), qos);
                         }
                     } catch (RuntimeException ignored) {
-                        // skip invalid line
                     }
                 }
                 List<String> offline = cmd.lrange(k("sess:" + clientId + ":offline"), 0, -1);
@@ -78,7 +82,7 @@ public final class RedisSessionStore implements SessionStore {
     }
 
     @Override
-    public synchronized void persistAll(Map<String, SessionService.Session> sessions) {
+    public void persistAll(Map<String, SessionService.Session> sessions) {
         try {
             String indexKey = k("sess:index");
             Set<String> oldIds = cmd.smembers(indexKey);
@@ -101,7 +105,7 @@ public final class RedisSessionStore implements SessionStore {
                 cmd.sadd(indexKey, s.clientId);
                 String subKey = k("sess:" + s.clientId + ":subs");
                 Map<String, String> subMap = new LinkedHashMap<>();
-                for (Map.Entry<String, Integer> sub : s.subscriptionsQos.entrySet()) {
+                for (Map.Entry<String, Integer> sub : s.subscriptionsQos().entrySet()) {
                     subMap.put(sub.getKey(), String.valueOf(sub.getValue() == null ? 0 : sub.getValue()));
                 }
                 if (!subMap.isEmpty()) {
@@ -125,7 +129,7 @@ public final class RedisSessionStore implements SessionStore {
     }
 
     @Override
-    public synchronized void persistClient(SessionService.Session s) {
+    public void persistClient(SessionService.Session s) {
         if (s == null || s.clientId == null || s.clientId.isEmpty()) {
             return;
         }
@@ -137,7 +141,7 @@ public final class RedisSessionStore implements SessionStore {
             cmd.del(subKey);
             cmd.del(offlineKey);
             Map<String, String> subMap = new LinkedHashMap<>();
-            for (Map.Entry<String, Integer> sub : s.subscriptionsQos.entrySet()) {
+            for (Map.Entry<String, Integer> sub : s.subscriptionsQos().entrySet()) {
                 subMap.put(sub.getKey(), String.valueOf(sub.getValue() == null ? 0 : sub.getValue()));
             }
             if (!subMap.isEmpty()) {
@@ -159,7 +163,7 @@ public final class RedisSessionStore implements SessionStore {
     }
 
     @Override
-    public synchronized void deleteClient(String clientId) {
+    public void deleteClient(String clientId) {
         if (clientId == null || clientId.isEmpty()) {
             return;
         }
@@ -172,7 +176,7 @@ public final class RedisSessionStore implements SessionStore {
     }
 
     @Override
-    public synchronized void deleteIfExists() {
+    public void deleteIfExists() {
         try {
             String indexKey = k("sess:index");
             Set<String> ids = cmd.smembers(indexKey);
@@ -232,7 +236,7 @@ public final class RedisSessionStore implements SessionStore {
     }
 
     @Override
-    public synchronized void close() {
+    public void close() {
         try {
             connection.close();
         } catch (RuntimeException e) {
@@ -245,4 +249,3 @@ public final class RedisSessionStore implements SessionStore {
         }
     }
 }
-

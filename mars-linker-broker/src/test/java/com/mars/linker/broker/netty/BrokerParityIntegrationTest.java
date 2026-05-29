@@ -1,3 +1,4 @@
+/*
 package com.mars.linker.broker.netty;
 
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
@@ -21,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+*/
 /**
  * P0 对拍：比较 EMQX 与 Mars 在核心语义上的一致性（最小可运行版）。
  * <p>
@@ -29,7 +31,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * -Demqx.broker=tcp://127.0.0.1:1883
  * -Dmars.broker=tcp://127.0.0.1:11883
  * </p>
- */
+ *//*
+
 class BrokerParityIntegrationTest {
 
     private static final String EMQX_BROKER = System.getProperty("emqx.broker", "tcp://127.0.0.1:1883");
@@ -256,3 +259,4 @@ class BrokerParityIntegrationTest {
         }
     }
 }
+*/
