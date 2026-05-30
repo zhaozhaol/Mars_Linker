@@ -1,0 +1,2 @@
+org.springframework.boot.env.EnvironmentPostProcessor=\
+  com.mars.linker.broker.config.encrypt.EncryptablePropertyPostProcessor

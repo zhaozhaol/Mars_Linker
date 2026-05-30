@@ -15,11 +15,14 @@ public class RejectionMessageCollector {
     }
 
     public void collectConnectRefused(String clientId, RejectionReason reason, Integer connackCode, String remoteAddress) {
+        String effectiveClientId = clientId != null ? clientId : remoteAddress;
+        String detail = "CONNACK code=0x" + (connackCode != null ? Integer.toHexString(connackCode) : "unknown");
         RejectionMessage msg = RejectionMessage.builder()
-                .clientId(clientId != null ? clientId : "unknown")
+                .clientId(effectiveClientId != null ? effectiveClientId : "unknown")
                 .type(RejectionType.CONNECT_REFUSED)
                 .reason(reason)
                 .connackCode(connackCode)
+                .detail(detail)
                 .remoteAddress(remoteAddress)
                 .build();
         store.add(msg);
@@ -27,7 +30,7 @@ public class RejectionMessageCollector {
 
     public void collectAclSubscribeDenied(String clientId, String topicFilter, String remoteAddress) {
         RejectionMessage msg = RejectionMessage.builder()
-                .clientId(clientId != null ? clientId : "unknown")
+                .clientId(clientId != null ? clientId : (remoteAddress != null ? remoteAddress : "unknown"))
                 .type(RejectionType.ACL_SUBSCRIBE_DENIED)
                 .reason(RejectionReason.ACL_SUBSCRIBE_DENIED)
                 .detail("topicFilter=" + topicFilter)
@@ -38,7 +41,7 @@ public class RejectionMessageCollector {
 
     public void collectAclPublishDenied(String clientId, String topic, String remoteAddress) {
         RejectionMessage msg = RejectionMessage.builder()
-                .clientId(clientId != null ? clientId : "unknown")
+                .clientId(clientId != null ? clientId : (remoteAddress != null ? remoteAddress : "unknown"))
                 .type(RejectionType.ACL_PUBLISH_DENIED)
                 .reason(RejectionReason.ACL_PUBLISH_DENIED)
                 .detail("topic=" + topic)

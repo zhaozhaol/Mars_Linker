@@ -50,6 +50,7 @@ function reasonLabel(reason: string): string {
           <th>客户端ID</th>
           <th>拒绝类型</th>
           <th>拒绝原因</th>
+          <th>详情</th>
           <th>远程地址</th>
           <th>操作</th>
         </tr>
@@ -60,6 +61,7 @@ function reasonLabel(reason: string): string {
           <td>{{ msg.clientId }}</td>
           <td><span :class="['badge', typeBadgeClass(msg.type)]">{{ typeLabel(msg.type) }}</span></td>
           <td>{{ reasonLabel(msg.reason) }}</td>
+          <td class="td--detail">{{ msg.detail || '-' }}</td>
           <td class="td--mono">{{ msg.remoteAddress }}</td>
           <td><el-button type="danger" size="small" @click="emit('remove', msg.id)">清除</el-button></td>
         </tr>
@@ -105,6 +107,7 @@ td {
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
 .td--mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; }
+.td--detail { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; color: rgba(255, 255, 255, 0.6); }
 .badge {
   display: inline-block;
   padding: 2px 8px;
