@@ -66,7 +66,7 @@ import { formatBoolean } from '../utils/formatter'
 
 const configStore = useConfigStore()
 
-const form = reactive({ collectMode: '', monitorRefreshMs: 5000 })
+const form = reactive({ collectMode: '', monitorRefreshMs: 10000 })
 
 watch(() => configStore.runtimeConfig, (c) => {
   if (c) { form.collectMode = c.collectMode; form.monitorRefreshMs = c.monitorRefreshMs }

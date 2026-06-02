@@ -101,11 +101,46 @@ class MqttFrameDecoderTest {
 */
 class MqttFrameDecoderTest {
 
-    public static void main(String[] args) throws MqttException {
-        for (int i = 0; i < 10000; i++) {
-            MqttClient client = new MqttClient("tcp://140.210.218.252:80", "bench-" + i);
-            client.connect(new MqttConnectOptions());
+    public static void main(String[] args) throws Exception {
+        int count = 12000;
+        String brokerUrl = "tcp://140.210.218.252:80";
+        String username = "zytxmq";
+        String password = "mq1890Q*86Y&n";
+
+        MqttConnectOptions opts = new MqttConnectOptions();
+        opts.setUserName(username);
+        opts.setPassword(password.toCharArray());
+        opts.setCleanSession(true);
+        opts.setAutomaticReconnect(true);
+        opts.setKeepAliveInterval(60);
+
+        java.util.concurrent.atomic.AtomicInteger connected = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.concurrent.atomic.AtomicInteger rejected = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        for (int i = 0; i < count; i++) {
+            String clientId = "bench-" + i;
+            try {
+                MqttClient client = new MqttClient(brokerUrl, clientId);
+                client.setCallback(new org.eclipse.paho.client.mqttv3.MqttCallback() {
+                    @Override public void connectionLost(Throwable cause) {}
+                    @Override public void messageArrived(String t, org.eclipse.paho.client.mqttv3.MqttMessage msg) {
+                        System.out.println("[消息] " + clientId + " topic=" + t + " payload=" + new String(msg.getPayload()));
+                    }
+                    @Override public void deliveryComplete(org.eclipse.paho.client.mqttv3.IMqttDeliveryToken token) {}
+                });
+                client.connect(opts);
+                client.subscribe("device/service/" + clientId, 1);
+                int c = connected.incrementAndGet();
+                if (c % 500 == 0) {
+                    System.out.println("[进度] 成功=" + c + " 拒绝=" + rejected.get() + " 最新=" + clientId);
+                }
+            } catch (Exception e) {
+                int r = rejected.incrementAndGet();
+                System.out.println("[拒绝] " + clientId + " 错误=" + e.getMessage());
+            }
         }
+        System.out.println("[结果] 成功=" + connected.get() + " 拒绝=" + rejected.get() + " 总计=" + count);
+        Thread.currentThread().join();
     }
 
 }

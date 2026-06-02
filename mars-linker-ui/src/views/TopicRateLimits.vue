@@ -7,7 +7,7 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 const data = ref<TopicRateLimitOverview | null>(null)
 const searchQuery = ref('')
-const refreshInterval = ref(5000)
+const refreshInterval = ref(10000)
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 const filteredStats = computed(() => {

@@ -28,7 +28,7 @@ public class MonitoringThreadPoolConfig {
                 coreSize, coreSize,
                 0L, TimeUnit.MILLISECONDS,
                 new LinkedBlockingQueue<>(1024),
-                new NamedThreadFactory("broker-monitor", true),
+                new NamedThreadFactory("broker-monitor", true, Thread.NORM_PRIORITY - 1),
                 (r, executor) -> {
                     MonitoringFaultBoundary.incrementDiscardCount();
                 }
@@ -42,7 +42,7 @@ public class MonitoringThreadPoolConfig {
                 coreSize, coreSize,
                 0L, TimeUnit.MILLISECONDS,
                 new LinkedBlockingQueue<>(512),
-                new NamedThreadFactory("broker-monitor-push", true),
+                new NamedThreadFactory("broker-monitor-push", true, Thread.NORM_PRIORITY - 1),
                 new ThreadPoolExecutor.DiscardOldestPolicy()
         );
     }

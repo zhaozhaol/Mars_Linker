@@ -4,8 +4,15 @@ spring:
 
 server:
   port: 11884                    # Spring Boot HTTP 端口（管理面 API + 静态资源）
+  tomcat:
+    max-threads: 400             # Tomcat 工作线程池上限；默认200，SSE长连接占用后高连接下不够
+    min-spare-threads: 20        # 最小空闲线程数；保持热线程减少冷启动延迟
+    accept-count: 200            # TCP 全连接队列（backlog）；默认100，高并发时需调大
+    max-connections: 8192        # Tomcat 最大连接数；默认8192
 
 management:
+  server:
+    port: 11885                    # Actuator 独立端口；与业务端口11884隔离，避免健康检查/Prometheus争抢Web线程
   endpoints:
     web:
       exposure:
@@ -151,7 +158,7 @@ mars:
     ui:
       enabled: true                    # UI 总开关；false 时不注册 Web 端点
       collection-buffer-size: 1000     # 采集事件缓冲区大小
-      monitor-refresh-ms: 5000         # 监控数据采集间隔（毫秒）
+      monitor-refresh-ms: 10000        # 监控数据采集间隔（毫秒）；降低频率减少对MQTT数据面影响
       connection-enabled: true         # 连接指标采集开关
       message-enabled: true            # 消息指标采集开关
       subscription-enabled: true       # 订阅指标采集开关
@@ -165,7 +172,7 @@ mars:
       max-history-memory-mb: 64        # 历史数据内存上限（MB）
       monitoring-thread-pool-size: 4   # 监控采集线程池大小（高连接数建议4-8）
       push-thread-pool-size: 4         # SSE 推送线程池大小
-      max-api-queries-per-second: 30   # API 查询每秒限流
+      max-api-queries-per-second: 100  # API 查询每秒限流；多用户并发访问时30不够
       max-push-connections: 50         # SSE 最大推送连接数
       persist-mode: memory             # 持久化模式：memory / file
       admin-username: admin            # 管理员账号

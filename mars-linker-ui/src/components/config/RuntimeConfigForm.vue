@@ -41,7 +41,7 @@ const emit = defineEmits<{ confirm: [form: { collectMode: string; monitorRefresh
 
 const form = reactive({
   collectMode: '',
-  monitorRefreshMs: 5000
+  monitorRefreshMs: 10000
 })
 
 watch(() => props.config, (c) => {

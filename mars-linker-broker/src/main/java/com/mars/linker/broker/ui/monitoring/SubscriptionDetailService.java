@@ -16,11 +16,15 @@ import io.netty.util.AttributeKey;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class SubscriptionDetailService {
 
     private static final int PAGINATION_THRESHOLD = 10000;
     private final MqttProtocolHandler protocolHandler;
+    private final AtomicReference<List<SubscriptionTopicInfo>> topicsSnapshot = new AtomicReference<>(Collections.emptyList());
+    private volatile long snapshotTimestamp = 0;
+    private static final long SNAPSHOT_TTL_MS = 10_000;
 
     public SubscriptionDetailService(MqttProtocolHandler protocolHandler) {
         this.protocolHandler = protocolHandler;
@@ -28,13 +32,7 @@ public class SubscriptionDetailService {
 
     public PagedResult<SubscriptionTopicInfo> listTopics(int page, int size) {
         return MonitoringFaultBoundary.executeWithResult(() -> {
-            SubscriptionRegistry registry = protocolHandler.subscriptionRegistry();
-            List<SubscriptionTopicInfo> all = new ArrayList<>();
-
-            all.addAll(collectFromMap(registry.exactTopicSubscribers(), "exact"));
-            all.addAll(collectFromMap(registry.wildcardSubscribers(), "wildcard"));
-            all.addAll(collectFromShareMap(registry.shareSubscribers()));
-
+            List<SubscriptionTopicInfo> all = getOrRefreshSnapshot();
             long total = all.size();
             int fromIndex = (page - 1) * size;
             int toIndex = Math.min(fromIndex + size, all.size());
@@ -43,6 +41,21 @@ public class SubscriptionDetailService {
                     : Collections.emptyList();
             return new PagedResult<>(paged, total, page, size);
         }, new PagedResult<>(Collections.emptyList(), 0, page, size));
+    }
+
+    private List<SubscriptionTopicInfo> getOrRefreshSnapshot() {
+        long now = System.currentTimeMillis();
+        if (now - snapshotTimestamp < SNAPSHOT_TTL_MS) {
+            return topicsSnapshot.get();
+        }
+        SubscriptionRegistry registry = protocolHandler.subscriptionRegistry();
+        List<SubscriptionTopicInfo> all = new ArrayList<>();
+        all.addAll(collectFromMap(registry.exactTopicSubscribers(), "exact"));
+        all.addAll(collectFromMap(registry.wildcardSubscribers(), "wildcard"));
+        all.addAll(collectFromShareMap(registry.shareSubscribers()));
+        topicsSnapshot.set(all);
+        snapshotTimestamp = now;
+        return all;
     }
 
     public List<SubscriberDetail> listSubscribers(String topicFilter) {

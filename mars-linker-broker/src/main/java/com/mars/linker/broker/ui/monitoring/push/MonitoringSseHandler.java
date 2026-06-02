@@ -6,6 +6,7 @@ import com.mars.linker.broker.ui.monitoring.isolation.MonitoringResourceBudget;
 import com.mars.linker.broker.ui.monitoring.model.PushMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -13,6 +14,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -37,6 +39,7 @@ public class MonitoringSseHandler {
     private final CopyOnWriteArrayList<SseConnection> connections = new CopyOnWriteArrayList<>();
     private final MonitoringResourceBudget resourceBudget;
     private final MarsLinkerUiProperties uiProps;
+    private final ExecutorService pushExecutor;
     private final AtomicLong eventIdSeq = new AtomicLong(1);
     private final ScheduledExecutorService keepaliveScheduler =
             Executors.newSingleThreadScheduledExecutor(r -> {
@@ -46,9 +49,11 @@ public class MonitoringSseHandler {
             });
 
     public MonitoringSseHandler(MonitoringResourceBudget resourceBudget,
-                                MarsLinkerUiProperties uiProps) {
+                                MarsLinkerUiProperties uiProps,
+                                @Qualifier("monitoring-push-executor") ExecutorService pushExecutor) {
         this.resourceBudget = resourceBudget;
         this.uiProps = uiProps;
+        this.pushExecutor = pushExecutor;
     }
 
     public SseEmitter subscribe(Set<String> categories) {
@@ -93,15 +98,17 @@ public class MonitoringSseHandler {
         MonitoringFaultBoundary.execute(() -> {
             for (SseConnection conn : connections) {
                 if (conn.categories.contains(message.getCategory()) || conn.categories.contains("all")) {
-                    try {
-                        conn.emitter.send(SseEmitter.event()
-                                .id(String.valueOf(eventIdSeq.getAndIncrement()))
-                                .name(message.getType())
-                                .data(message));
-                    } catch (IOException e) {
-                        connections.remove(conn);
-                        cancelKeepalive(conn);
-                    }
+                    pushExecutor.execute(() -> {
+                        try {
+                            conn.emitter.send(SseEmitter.event()
+                                    .id(String.valueOf(eventIdSeq.getAndIncrement()))
+                                    .name(message.getType())
+                                    .data(message));
+                        } catch (IOException e) {
+                            connections.remove(conn);
+                            cancelKeepalive(conn);
+                        }
+                    });
                 }
             }
         });

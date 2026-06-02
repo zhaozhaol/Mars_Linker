@@ -4,7 +4,6 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
-import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * MarsLinker Broker 应用启动入口。
@@ -17,7 +16,6 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * </ul>
  */
 @SpringBootApplication(exclude = {DataSourceAutoConfiguration.class, RedisAutoConfiguration.class})
-@EnableScheduling
 public class MarsLinkerApplication {
 
     public static void main(String[] args) {

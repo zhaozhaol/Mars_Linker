@@ -170,7 +170,7 @@ const formatBytes = (bytes: number): string => {
 }
 
 const { start: startPolling, stop: stopPolling } = usePolling({
-  interval: 3000,
+  interval: 10000,
   callback: store.fetchHealth
 })
 

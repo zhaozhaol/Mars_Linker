@@ -20,28 +20,28 @@ public class NamedThreadFactory implements ThreadFactory {
 
     private final String prefix;
     private final boolean daemon;
+    private final int priority;
     private final AtomicInteger counter = new AtomicInteger(1);
 
-    /**
-     * @param prefix  线程名前缀（如 "broker-auth-worker"）
-     * @param daemon  是否为守护线程
-     */
     public NamedThreadFactory(String prefix, boolean daemon) {
-        this.prefix = prefix;
-        this.daemon = daemon;
+        this(prefix, daemon, Thread.NORM_PRIORITY);
     }
 
-    /**
-     * @param prefix 线程名前缀，默认非守护线程
-     */
+    public NamedThreadFactory(String prefix, boolean daemon, int priority) {
+        this.prefix = prefix;
+        this.daemon = daemon;
+        this.priority = priority;
+    }
+
     public NamedThreadFactory(String prefix) {
-        this(prefix, false);
+        this(prefix, false, Thread.NORM_PRIORITY);
     }
 
     @Override
     public Thread newThread(Runnable r) {
         Thread t = new Thread(r, prefix + "-" + counter.getAndIncrement());
         t.setDaemon(daemon);
+        t.setPriority(priority);
         return t;
     }
 }

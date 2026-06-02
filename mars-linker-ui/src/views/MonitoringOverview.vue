@@ -11,12 +11,7 @@
     </div>
 
     <div class="push-status-bar">
-      <span class="push-indicator" :class="{ connected: pushStore.connected }">
-        <span class="push-dot"></span>
-        {{ pushStore.connected ? '已连接' : '未连接' }}
-      </span>
-      <span class="push-mode">推送模式: {{ pushStore.mode === 'sse' ? 'SSE' : '轮询' }}</span>
-      <span v-if="pushStore.reconnectCount > 0" class="reconnect-info">重连 {{ pushStore.reconnectCount }} 次</span>
+      <span class="push-mode">自动刷新: {{ refreshInterval / 1000 }}秒</span>
     </div>
 
     <div v-if="healthStatus" class="health-row">
@@ -203,13 +198,10 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { useMonitoringStore } from '../stores/monitoring'
-import { usePushStore } from '../stores/push'
-import { usePushFallback } from '../composables/usePushFallback'
 import { usePolling } from '../composables/usePolling'
 import { formatBoolean, formatMetricValue, formatTimestamp } from '../utils/formatter'
 import { getConnectionMetrics, getMessageMetrics, getSubscriptionMetrics, getSystemMetrics, getHealthStatus } from '../api/monitoring'
 import type { ConnectionMetrics, MessageMetrics, SubscriptionMetrics, SystemMetrics, HealthStatus } from '../types/monitoring'
-import type { PushMessage } from '../types/push'
 import TrendChart from '../components/monitoring/TrendChart.vue'
 import ConnectionPanel from '../components/monitoring/ConnectionPanel.vue'
 import MessagePanel from '../components/monitoring/MessagePanel.vue'
@@ -218,8 +210,8 @@ import SystemPanel from '../components/monitoring/SystemPanel.vue'
 import HealthBadge from '../components/monitoring/HealthBadge.vue'
 
 const monitoringStore = useMonitoringStore()
-const pushStore = usePushStore()
-const refreshInterval = ref(monitoringStore.runtimeConfig?.monitorRefreshMs ?? 5000)
+
+const refreshInterval = ref(monitoringStore.runtimeConfig?.monitorRefreshMs ?? 10000)
 
 const connectionData = ref<ConnectionMetrics | null>(null)
 const connectionLoading = ref(false)
@@ -261,47 +253,30 @@ const fetchHealth = async () => {
 
 const { start, stop, resume } = usePolling({
   interval: refreshInterval,
-  callback: () => monitoringStore.fetchOverview()
+  callback: () => Promise.all([
+    monitoringStore.fetchOverview(),
+    fetchConnection(),
+    fetchMessage(),
+    fetchSubscription(),
+    fetchSystem(),
+    fetchHealth()
+  ])
 })
 
-const { connect: connectPush, disconnect: disconnectPush } = usePushFallback(['connection', 'message', 'subscription', 'system'])
-
-const handlePushMessage = (msg: PushMessage) => {
-  pushStore.setConnected(true)
-  if (msg.type === 'metrics_update') {
-    switch (msg.category) {
-      case 'connection':
-        connectionData.value = msg.payload
-        break
-      case 'message':
-        messageData.value = msg.payload
-        break
-      case 'subscription':
-        subscriptionData.value = msg.payload
-        break
-      case 'system':
-        systemData.value = msg.payload
-        break
-      case 'all':
-        if (msg.payload) {
-          connectionData.value = msg.payload.metrics ?? connectionData.value
-          messageData.value = msg.payload.metrics ?? messageData.value
-        }
-        break
-    }
-  } else if (msg.type === 'alert_event') {
-    monitoringStore.fetchOverview()
-  }
-}
-
 const manualRefresh = async () => {
-  await monitoringStore.fetchOverview()
+  await Promise.all([
+    monitoringStore.fetchOverview(),
+    fetchConnection(),
+    fetchMessage(),
+    fetchSubscription(),
+    fetchSystem(),
+    fetchHealth()
+  ])
   if (!monitoringStore.isPaused) resume()
 }
 
 onMounted(() => {
   start()
-  connectPush(handlePushMessage)
   fetchConnection()
   fetchMessage()
   fetchSubscription()
@@ -310,7 +285,6 @@ onMounted(() => {
 })
 onUnmounted(() => {
   stop()
-  disconnectPush()
 })
 
 const hasAlert = computed(() => {
@@ -356,21 +330,7 @@ const allMetrics = computed(() => {
   display: flex; align-items: center; gap: 12px;
   margin-bottom: 16px; font-size: 12px;
 }
-.push-indicator {
-  display: flex; align-items: center; gap: 6px;
-  color: rgba(255,255,255,0.4);
-}
-.push-indicator.connected { color: #10b981; }
-.push-dot {
-  width: 6px; height: 6px; border-radius: 50%;
-  background: rgba(255,255,255,0.3);
-}
-.push-indicator.connected .push-dot {
-  background: #10b981;
-  box-shadow: 0 0 6px rgba(16,185,129,0.4);
-}
 .push-mode { color: rgba(255,255,255,0.3); }
-.reconnect-info { color: #f59e0b; font-size: 11px; }
 
 .health-row {
   display: flex; align-items: center; gap: 10px;
