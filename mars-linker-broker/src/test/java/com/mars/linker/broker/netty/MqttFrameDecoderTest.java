@@ -1,9 +1,12 @@
-/*
+
 package com.mars.linker.broker.netty;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
+import org.eclipse.paho.client.mqttv3.MqttClient;
+import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
+import org.eclipse.paho.client.mqttv3.MqttException;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
@@ -13,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-*/
+/*
 /**
  * {@link MqttFrameDecoder} 单元测试（EmbeddedChannel）。
  * <p>
@@ -96,3 +99,13 @@ class MqttFrameDecoderTest {
     }
 }
 */
+class MqttFrameDecoderTest {
+
+    public static void main(String[] args) throws MqttException {
+        for (int i = 0; i < 10000; i++) {
+            MqttClient client = new MqttClient("tcp://140.210.218.252:80", "bench-" + i);
+            client.connect(new MqttConnectOptions());
+        }
+    }
+
+}

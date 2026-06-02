@@ -554,7 +554,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         ClientSessionContext session = ClientSessionContext.of(ctx);
         int start = payload.readerIndex();
         String protocolName = readMqttUtf8(payload);
-        if (!"MQTT".equals(protocolName)) {
+        if (!"MQTT".equals(protocolName) && !"MQIsdp".equals(protocolName)) {
             log.warn("CONNECT refused reason=protocol_name_invalid protocolName=[{}] channelId={}", protocolName, ctx.channel().id().asShortText());
             notifyEvent(ctx, EventType.CONNECT_REFUSED, null, "protocol_name_invalid", null);
             if (rejectionMessageCollector != null) {
@@ -574,7 +574,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         int connectFlags = payload.readUnsignedByte();
         int keepAlive = payload.readUnsignedShort();
 
-        if (protocolLevel != 0x04 && protocolLevel != 0x05) {
+        if (protocolLevel != 0x03 && protocolLevel != 0x04 && protocolLevel != 0x05) {
             log.warn("CONNECT refused reason=unsupported_protocol_level protocolLevel=0x{} channelId={}",
                     Integer.toHexString(protocolLevel), ctx.channel().id().asShortText());
             notifyEvent(ctx, EventType.CONNECT_REFUSED, null, "unsupported_protocol_level", null);

@@ -89,8 +89,8 @@ public class AuthController {
             }
             String username = claims.getSubject();
             List<String> roles = claims.getStringListClaim("roles");
-            if (roles == null || roles.isEmpty()) {
-                roles = List.of("ROLE_UI_VIEW");
+            if (roles == null || roles.isEmpty() || !roles.contains("ROLE_UI_VIEW")) {
+                roles = List.of("ROLE_UI_VIEW", "ROLE_UI_MANAGE");
             }
             String newAccessToken = signToken(username, roles, uiProperties.getJwtExpireSeconds());
             Map<String, Object> result = new LinkedHashMap<>();

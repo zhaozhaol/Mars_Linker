@@ -77,7 +77,8 @@ apiClient.interceptors.response.use(
       throw new ApiError(401, '认证已过期，请重新登录')
     }
     if (status === 403) {
-      throw new ApiError(403, '权限不足，无法访问该资源')
+      clearAuthAndRedirect()
+      throw new ApiError(403, '权限不足，请重新登录')
     }
     if (status === 404) {
       throw new ModuleDisabledError()
