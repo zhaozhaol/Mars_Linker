@@ -87,7 +87,7 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
 const connect = () => {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const wsPort = import.meta.env.VITE_LOG_WS_PORT || '11885'
+  const wsPort = import.meta.env.VITE_LOG_WS_PORT || '11886'
   const url = `${protocol}//${location.hostname}:${wsPort}/api/ui/logs/stream`
   ws = new WebSocket(url)
 

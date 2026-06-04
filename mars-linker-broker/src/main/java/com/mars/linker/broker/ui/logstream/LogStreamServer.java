@@ -36,7 +36,7 @@ public class LogStreamServer implements SmartLifecycle {
     private final int port;
     private final MarsLinkerUiProperties uiProperties;
 
-    public LogStreamServer(@Value("${mars.linker.ui.log-ws-port:11885}") int port,
+    public LogStreamServer(@Value("${mars.linker.ui.log-ws-port:11886}") int port,
                            MarsLinkerUiProperties uiProperties) {
         this.port = port;
         this.uiProperties = uiProperties;

@@ -127,7 +127,7 @@ mars:
               expression: "device_"
         disconnected:                   # 事件类型：连接断开
           enabled: true
-          topic: devices/disconnected
+          topic: devices/offline
           forward-rules:
             - match-type: regex_match
               expression: "device_"
