@@ -176,6 +176,6 @@ public final class TraceContext {
         String channelId = ctx.channel().id().asShortText();
         long timestamp = System.currentTimeMillis() % 1_000_000;
         int random = ThreadLocalRandom.current().nextInt(10_000);
-        return String.format("%s-%06d-%04d", channelId, timestamp, random);
+        return String.format("%s%06d%04d", channelId, timestamp, random);
     }
 }
