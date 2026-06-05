@@ -104,7 +104,7 @@ public class AsyncAuthProvider implements AuthProvider {
                     timeoutFuture.cancel(false);
                     if (completed.compareAndSet(false, true)) {
                         if (ctx.channel().isActive()) {
-                            ctx.channel().eventLoop().execute(() -> {
+                            ctx.channel().eventLoop().execute(TraceContext.wrapRunnable(traceId, () -> {
                                 if (success) {
                                     StructuredLogger.info("AUTH", clientId, "auth_success",
                                             durationMs, "SUCCESS");
@@ -113,7 +113,7 @@ public class AsyncAuthProvider implements AuthProvider {
                                             durationMs, "REJECTED");
                                 }
                                 callback.onResult(new AuthResult(success, durationMs, null));
-                            });
+                            }));
                         } else {
                             log.debug("鉴权完成但 Channel 已关闭，丢弃结果: clientId={}", clientId);
                         }
@@ -125,8 +125,8 @@ public class AsyncAuthProvider implements AuthProvider {
                         StructuredLogger.error("AUTH", clientId, "auth_error",
                                 durationMs, "ERROR", e.getMessage());
                         if (ctx.channel().isActive()) {
-                            ctx.channel().eventLoop().execute(() ->
-                                    callback.onResult(new AuthResult(false, durationMs, e)));
+                            ctx.channel().eventLoop().execute(TraceContext.wrapRunnable(traceId, () ->
+                                    callback.onResult(new AuthResult(false, durationMs, e))));
                         }
                     }
                 }

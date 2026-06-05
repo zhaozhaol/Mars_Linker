@@ -6,6 +6,7 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.util.AttributeKey;
 import io.netty.util.HashedWheelTimer;
 import io.netty.util.Timeout;
+import com.mars.linker.broker.netty.trace.TraceContext;
 import org.slf4j.Logger;
 
 import java.nio.charset.StandardCharsets;
@@ -140,11 +141,17 @@ public final class QoS1OutboundService {
         }
         Timeout t = retransmitTimer.newTimeout(
                 timeout -> {
+                    String tid = TraceContext.getTraceId(ctx);
+                    TraceContext.setTraceId(tid);
+                    try {
                     if (timeout.isExpired()) {
                         retransmitIfNeeded(ctx);
                     }
                     if (ctx.channel().isActive()) {
                         startRetransmitTaskIfNeeded(ctx);
+                    }
+                    } finally {
+                        TraceContext.clearTraceId();
                     }
                 },
                 retransmitIntervalMs, TimeUnit.MILLISECONDS

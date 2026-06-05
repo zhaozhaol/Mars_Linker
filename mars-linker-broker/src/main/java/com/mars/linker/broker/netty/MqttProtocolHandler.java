@@ -1,6 +1,7 @@
 package com.mars.linker.broker.netty;
 
 import com.mars.linker.broker.netty.protocol.*;
+import com.mars.linker.broker.netty.trace.TraceContext;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandler;
@@ -385,6 +386,8 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
      */
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, ByteBuf frame) {
+        TraceContext.initTraceId(ctx);
+        try {
         ClientSessionContext session = ClientSessionContext.of(ctx);
         // EmbeddedChannel 等场景下 channelActive 顺序可能与真机略有差异，此处幂等登记，避免首包时 channels 未就绪。
         channels.put(ctx.channel().id(), ctx);
@@ -464,10 +467,15 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                 closeWithReason(ctx, "未支持的消息类型 type=" + messageType);
                 break;
         }
+        } finally {
+            TraceContext.clearTraceId();
+        }
     }
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        TraceContext.initTraceId(ctx);
+        try {
         ClientSessionContext session = ClientSessionContext.of(ctx);
         log.info("MQTT 连接已释放 channelId={} remote={}",
                 ctx.channel().id().asShortText(),
@@ -535,6 +543,9 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         qos2Outbound.onChannelInactive(ctx);
         stopKeepAliveTask(ctx);
         super.channelInactive(ctx);
+        } finally {
+            TraceContext.clearTraceId();
+        }
     }
 
     /**

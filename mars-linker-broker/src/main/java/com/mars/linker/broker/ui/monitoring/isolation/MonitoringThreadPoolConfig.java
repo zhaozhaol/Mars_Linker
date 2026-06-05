@@ -2,6 +2,7 @@ package com.mars.linker.broker.ui.monitoring.isolation;
 
 import com.mars.linker.broker.netty.MqttProtocolHandler;
 import com.mars.linker.broker.netty.trace.NamedThreadFactory;
+import com.mars.linker.broker.netty.trace.TraceContextTaskDecorator;
 import com.mars.linker.broker.ui.config.MarsLinkerUiProperties;
 import com.mars.linker.broker.ui.monitoring.SubscriptionDetailService;
 import com.mars.linker.broker.ui.monitoring.sampling.SampleRateFilter;
@@ -10,11 +11,10 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableAsync;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 
 @Configuration
 @EnableAsync
@@ -22,29 +22,35 @@ import java.util.concurrent.TimeUnit;
 public class MonitoringThreadPoolConfig {
 
     @Bean("monitoring-executor")
-    public ExecutorService monitoringExecutor(MarsLinkerUiProperties props) {
+    public Executor monitoringExecutor(MarsLinkerUiProperties props) {
         int coreSize = props.getMonitoringThreadPoolSize();
-        return new ThreadPoolExecutor(
-                coreSize, coreSize,
-                0L, TimeUnit.MILLISECONDS,
-                new LinkedBlockingQueue<>(1024),
-                new NamedThreadFactory("broker-monitor", true, Thread.NORM_PRIORITY - 1),
-                (r, executor) -> {
-                    MonitoringFaultBoundary.incrementDiscardCount();
-                }
-        );
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setThreadNamePrefix("broker-monitor-");
+        executor.setCorePoolSize(coreSize);
+        executor.setMaxPoolSize(coreSize);
+        executor.setQueueCapacity(1024);
+        executor.setThreadPriority(Thread.NORM_PRIORITY - 1);
+        executor.setDaemon(true);
+        executor.setTaskDecorator(new TraceContextTaskDecorator());
+        executor.setRejectedExecutionHandler((r, ex) -> MonitoringFaultBoundary.incrementDiscardCount());
+        executor.initialize();
+        return executor;
     }
 
     @Bean("monitoring-push-executor")
-    public ExecutorService pushExecutor(MarsLinkerUiProperties props) {
+    public Executor pushExecutor(MarsLinkerUiProperties props) {
         int coreSize = props.getPushThreadPoolSize();
-        return new ThreadPoolExecutor(
-                coreSize, coreSize,
-                0L, TimeUnit.MILLISECONDS,
-                new LinkedBlockingQueue<>(512),
-                new NamedThreadFactory("broker-monitor-push", true, Thread.NORM_PRIORITY - 1),
-                new ThreadPoolExecutor.DiscardOldestPolicy()
-        );
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setThreadNamePrefix("broker-monitor-push-");
+        executor.setCorePoolSize(coreSize);
+        executor.setMaxPoolSize(coreSize);
+        executor.setQueueCapacity(512);
+        executor.setThreadPriority(Thread.NORM_PRIORITY - 1);
+        executor.setDaemon(true);
+        executor.setTaskDecorator(new TraceContextTaskDecorator());
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.DiscardOldestPolicy());
+        executor.initialize();
+        return executor;
     }
 
     @Bean

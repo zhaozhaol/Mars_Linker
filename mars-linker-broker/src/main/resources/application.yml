@@ -1,6 +1,9 @@
 spring:
   application:
     name: mars-linker-broker
+  profiles:
+    active:
+      - trace-enabled
 
 server:
   port: 11884                    # Spring Boot HTTP 端口（管理面 API + 静态资源）

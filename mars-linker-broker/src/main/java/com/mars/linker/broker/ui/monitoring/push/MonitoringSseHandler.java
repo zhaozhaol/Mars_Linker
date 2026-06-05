@@ -14,7 +14,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -39,7 +39,7 @@ public class MonitoringSseHandler {
     private final CopyOnWriteArrayList<SseConnection> connections = new CopyOnWriteArrayList<>();
     private final MonitoringResourceBudget resourceBudget;
     private final MarsLinkerUiProperties uiProps;
-    private final ExecutorService pushExecutor;
+    private final Executor pushExecutor;
     private final AtomicLong eventIdSeq = new AtomicLong(1);
     private final ScheduledExecutorService keepaliveScheduler =
             Executors.newSingleThreadScheduledExecutor(r -> {
@@ -50,7 +50,7 @@ public class MonitoringSseHandler {
 
     public MonitoringSseHandler(MonitoringResourceBudget resourceBudget,
                                 MarsLinkerUiProperties uiProps,
-                                @Qualifier("monitoring-push-executor") ExecutorService pushExecutor) {
+                                @Qualifier("monitoring-push-executor") Executor pushExecutor) {
         this.resourceBudget = resourceBudget;
         this.uiProps = uiProps;
         this.pushExecutor = pushExecutor;

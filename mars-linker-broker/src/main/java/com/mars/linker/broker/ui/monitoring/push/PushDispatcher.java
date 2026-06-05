@@ -11,7 +11,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executor;
 
 @Component
 @ConditionalOnProperty(prefix = "mars.linker.ui", name = "enabled", havingValue = "true", matchIfMissing = true)
@@ -22,13 +22,13 @@ public class PushDispatcher {
     private final MonitoringSseHandler sseHandler;
     private final MonitoringService monitoringService;
     private final MarsLinkerUiProperties uiProperties;
-    private final ExecutorService monitoringExecutor;
+    private final Executor monitoringExecutor;
 
     public PushDispatcher(MetricCategoryService metricCategoryService,
                           MonitoringSseHandler sseHandler,
                           MonitoringService monitoringService,
                           MarsLinkerUiProperties uiProperties,
-                          @Qualifier("monitoring-executor") ExecutorService monitoringExecutor) {
+                          @Qualifier("monitoring-executor") Executor monitoringExecutor) {
         this.metricCategoryService = metricCategoryService;
         this.sseHandler = sseHandler;
         this.monitoringService = monitoringService;

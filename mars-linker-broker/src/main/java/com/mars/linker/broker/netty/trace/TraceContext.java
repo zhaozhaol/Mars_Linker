@@ -4,6 +4,7 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.util.AttributeKey;
 import org.slf4j.MDC;
 
+import java.util.concurrent.Callable;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.Map;
 
@@ -112,6 +113,9 @@ public final class TraceContext {
      * @return 包装后的 Runnable
      */
     public static Runnable wrapRunnable(String traceId, Runnable task) {
+        if (traceId == null || "N/A".equals(traceId)) {
+            return task;
+        }
         Map<String, String> contextMap = MDC.getCopyOfContextMap();
         return () -> {
             Map<String, String> oldContext = MDC.getCopyOfContextMap();
@@ -121,6 +125,40 @@ public final class TraceContext {
                 }
                 MDC.put(MDC_KEY, traceId);
                 task.run();
+            } finally {
+                if (oldContext != null) {
+                    MDC.setContextMap(oldContext);
+                } else {
+                    MDC.clear();
+                }
+            }
+        };
+    }
+
+    /**
+     * 包装 Callable，在目标线程中恢复 traceId 到 MDC，执行完毕后清理 MDC，异常正常传播不吞没。
+     * <p>
+     * 用于带返回值的异步任务（如 Future 提交）的 traceId 传播。
+     * </p>
+     *
+     * @param traceId 当前链路的 traceId
+     * @param task    要执行的带返回值任务
+     * @param <V>     返回值类型
+     * @return 包装后的 Callable
+     */
+    public static <V> Callable<V> wrapCallable(String traceId, Callable<V> task) {
+        if (traceId == null || "N/A".equals(traceId)) {
+            return task;
+        }
+        Map<String, String> contextMap = MDC.getCopyOfContextMap();
+        return () -> {
+            Map<String, String> oldContext = MDC.getCopyOfContextMap();
+            try {
+                if (contextMap != null) {
+                    MDC.setContextMap(contextMap);
+                }
+                MDC.put(MDC_KEY, traceId);
+                return task.call();
             } finally {
                 if (oldContext != null) {
                     MDC.setContextMap(oldContext);
