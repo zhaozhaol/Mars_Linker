@@ -53,9 +53,8 @@ public final class TopicFilterSupport {
         String[] parts = topicFilter.split("/", -1);
         for (int i = 0; i < parts.length; i++) {
             String p = parts[i];
-            if (p.isEmpty()) {
-                return false;
-            }
+            // MQTT 3.1.1 §4.7.1: 空层级合法（如 /sensor/data、sensor/、sensor//data）
+            // 仅校验 +/# 必须占完整一级
             if (p.equals("#")) {
                 return i == parts.length - 1;
             }
@@ -74,6 +73,10 @@ public final class TopicFilterSupport {
 
     public static boolean matchTopicFilter(String filter, String topic) {
         if (filter == null || filter.isEmpty() || topic == null || topic.isEmpty()) {
+            return false;
+        }
+        // MQTT-4.7.2-1: 通配符 # 和 +（作为第一层）不匹配 $ 前缀系统主题
+        if (topic.startsWith("$") && (filter.startsWith("#") || filter.startsWith("+"))) {
             return false;
         }
         if (isShareSubscription(filter)) {
@@ -182,7 +185,9 @@ public final class TopicFilterSupport {
         }
 
         private void collect(TopicNode node, String[] levels, int idx, Set<String> out) {
-            if (!node.hashFilters.isEmpty()) {
+            // MQTT-4.7.2-1: 根层级的 # 和 + 不匹配 $ 前缀系统主题
+            boolean skipRootWildcards = idx == 0 && levels.length > 0 && levels[0].startsWith("$");
+            if (!skipRootWildcards && !node.hashFilters.isEmpty()) {
                 out.addAll(node.hashFilters);
             }
             if (idx >= levels.length) {
@@ -195,9 +200,11 @@ public final class TopicFilterSupport {
             if (literal != null) {
                 collect(literal, levels, idx + 1, out);
             }
-            TopicNode plus = node.plus;
-            if (plus != null) {
-                collect(plus, levels, idx + 1, out);
+            if (!skipRootWildcards) {
+                TopicNode plus = node.plus;
+                if (plus != null) {
+                    collect(plus, levels, idx + 1, out);
+                }
             }
         }
     }

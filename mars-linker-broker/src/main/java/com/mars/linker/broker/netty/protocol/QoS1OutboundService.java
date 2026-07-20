@@ -30,6 +30,10 @@ public final class QoS1OutboundService {
             AttributeKey.valueOf("mqtt_outbound_qos1_retransmit_task");
     private static final AttributeKey<AtomicInteger> NEXT_OUTBOUND_PACKET_ID =
             AttributeKey.valueOf("mqtt_next_outbound_packet_id");
+    // BUG-11: 共享 packetId 空间，回绕时需同时检查 QoS2 下行 inflight（与 QoS2OutboundService 同名 key 共享）
+    @SuppressWarnings("unchecked")
+    private static final AttributeKey<ConcurrentHashMap<Integer, ?>> OUTBOUND_QOS2_INFLIGHT_CHECK =
+            AttributeKey.valueOf("mqtt_outbound_qos2_inflight");
 
     private final boolean retransmitEnabled;
     private final long retransmitIntervalMs;
@@ -63,10 +67,24 @@ public final class QoS1OutboundService {
             AtomicInteger newId = new AtomicInteger(0);
             id = ctx.channel().attr(NEXT_OUTBOUND_PACKET_ID).compareAndSet(null, newId) ? newId : ctx.channel().attr(NEXT_OUTBOUND_PACKET_ID).get();
         }
+        Set<Integer> qos1Inflight = ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT).get();
+        ConcurrentHashMap<Integer, ?> qos2Inflight = ctx.channel().attr(OUTBOUND_QOS2_INFLIGHT_CHECK).get();
         return id.updateAndGet(prev -> {
             int n = prev + 1;
             if (n > 0xFFFF) {
                 n = 1;
+            }
+            // BUG-11 修复：回绕时跳过仍在 inflight 的 packetId（QoS1 + QoS2 共享 packetId 空间）
+            if ((qos1Inflight != null && qos1Inflight.contains(n))
+                    || (qos2Inflight != null && qos2Inflight.containsKey(n))) {
+                int start = n;
+                do {
+                    n = (n % 0xFFFF) + 1;
+                    if (n == start) {
+                        return prev; // 所有 id 都在 inflight（不应发生），保持原值
+                    }
+                } while ((qos1Inflight != null && qos1Inflight.contains(n))
+                        || (qos2Inflight != null && qos2Inflight.containsKey(n)));
             }
             return n;
         });
@@ -84,10 +102,13 @@ public final class QoS1OutboundService {
         if (retransmitIntervalMs <= 0) {
             return;
         }
+        // BUG-5 修复：用 compareAndSet 原子化，避免跨 EventLoop 并发时两个发布者都看到 null 导致 set 互相覆盖
         ConcurrentHashMap<Integer, Inflight> m = ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT_MAP).get();
         if (m == null) {
             m = new ConcurrentHashMap<>();
-            ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT_MAP).set(m);
+            if (!ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT_MAP).compareAndSet(null, m)) {
+                m = ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT_MAP).get();
+            }
         }
         byte[] copy = new byte[payload.length];
         System.arraycopy(payload, 0, copy, 0, payload.length);
@@ -200,10 +221,13 @@ public final class QoS1OutboundService {
     }
 
     private static void trackInflightId(ChannelHandlerContext ctx, int packetId) {
+        // BUG-5 修复：用 compareAndSet 原子化，避免并发时 set 互相覆盖导致 inflight 条目进入孤儿 map
         Set<Integer> inflight = ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT).get();
         if (inflight == null) {
             inflight = ConcurrentHashMap.newKeySet();
-            ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT).set(inflight);
+            if (!ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT).compareAndSet(null, inflight)) {
+                inflight = ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT).get();
+            }
         }
         inflight.add(packetId);
     }

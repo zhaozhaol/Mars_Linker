@@ -56,7 +56,7 @@ public final class PublishRouter {
         );
 
         if (grantedQosBySubscriber.isEmpty()) {
-            enqueueForOfflinePersistentSessions(topic, payload, retain, pubQos, sessionService, clientToChannel, channels);
+            enqueueForOfflinePersistentSessions(topic, payload, false, pubQos, sessionService, clientToChannel, channels);
             log.trace("PUBLISH 无订阅者 topic={}", topic);
             return 0;
         }
@@ -77,7 +77,7 @@ public final class PublishRouter {
             if (eff == 0) {
                 int rl = 2 + topicBytes.length + (mqtt5 ? 1 : 0) + payload.length;
                 ByteBuf out = Unpooled.buffer();
-                int fh = 0x30 | (retain ? 0x01 : 0x00);
+                int fh = 0x30;
                 out.writeByte(fh);
                 writeRemainingLength(out, rl);
                 out.writeShort(topicBytes.length);
@@ -89,15 +89,15 @@ public final class PublishRouter {
                 subscriberCtx.writeAndFlush(out);
             } else if (eff == 2 && qos2Publisher != null) {
                 int outPacketId = packetIdSupplier.next(subscriberCtx);
-                qos2Publisher.publishQos2(subscriberCtx, topic, payload, retain, outPacketId);
+                qos2Publisher.publishQos2(subscriberCtx, topic, payload, false, outPacketId);
                 log.debug("下行 PUBLISH QoS2 topic={} outPacketId={} -> subscriberChannelId={}",
                         topic, outPacketId, subscriberId.asShortText());
             } else {
                 int outPacketId = packetIdSupplier.next(subscriberCtx);
-                outboundTracker.track(subscriberCtx, outPacketId, topic, payload, retain);
+                outboundTracker.track(subscriberCtx, outPacketId, topic, payload, false);
                 int rl = 2 + topicBytes.length + 2 + (mqtt5 ? 1 : 0) + payload.length;
                 ByteBuf out = Unpooled.buffer();
-                int fh = 0x32 | (dup ? 0x08 : 0x00) | (retain ? 0x01 : 0x00);
+                int fh = 0x32 | (dup ? 0x08 : 0x00);
                 out.writeByte(fh);
                 writeRemainingLength(out, rl);
                 out.writeShort(topicBytes.length);
@@ -114,7 +114,7 @@ public final class PublishRouter {
             }
             n++;
         }
-        enqueueForOfflinePersistentSessions(topic, payload, retain, pubQos, sessionService, clientToChannel, channels);
+        enqueueForOfflinePersistentSessions(topic, payload, false, pubQos, sessionService, clientToChannel, channels);
         return n;
     }
 

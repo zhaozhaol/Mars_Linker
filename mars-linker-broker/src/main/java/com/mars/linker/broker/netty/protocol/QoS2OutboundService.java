@@ -91,10 +91,13 @@ public final class QoS2OutboundService {
                                byte[] payload,
                                boolean retain,
                                State initialState) {
+        // BUG-5 修复：用 compareAndSet 原子化，避免跨 EventLoop 并发时两个发布者都看到 null 导致 set 互相覆盖
         ConcurrentHashMap<Integer, InflightQos2> m = ctx.channel().attr(OUTBOUND_QOS2_INFLIGHT).get();
         if (m == null) {
             m = new ConcurrentHashMap<>();
-            ctx.channel().attr(OUTBOUND_QOS2_INFLIGHT).set(m);
+            if (!ctx.channel().attr(OUTBOUND_QOS2_INFLIGHT).compareAndSet(null, m)) {
+                m = ctx.channel().attr(OUTBOUND_QOS2_INFLIGHT).get();
+            }
         }
         byte[] copy = new byte[payload.length];
         System.arraycopy(payload, 0, copy, 0, payload.length);

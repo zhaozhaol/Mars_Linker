@@ -72,10 +72,10 @@ public final class QoS2InboundService {
             log.debug("PUBREL 已处理并投递 topic={} packetId={} channelId={}",
                     msg.topic, packetId, ctx.channel().id().asShortText());
         } else {
-            log.warn("PUBREL packetId={} 无对应 pending 消息，协议违规关闭连接 channelId={}",
+            // MQTT 3.1.1 §4.3.3: 收到 PUBREL 必须 PUBCOMP。pending 为空通常因客户端重发
+            // 已完成握手的 PUBLISH(DUP=1) 后再发 PUBREL，属合法重传，不关闭连接（修复 BUG-4）
+            log.debug("PUBREL packetId={} 无对应 pending（疑似握手后重发），回 PUBCOMP channelId={}",
                     packetId, ctx.channel().id().asShortText());
-            ctx.close();
-            return;
         }
         writePubComp(ctx, packetId);
     }
@@ -108,9 +108,13 @@ public final class QoS2InboundService {
             pending = new ConcurrentHashMap<>();
             ctx.channel().attr(INBOUND_QOS2_PENDING).set(pending);
         }
-        if (!pending.containsKey(packetId)
-                && maxPendingPerConnection > 0
-                && pending.size() >= maxPendingPerConnection) {
+        // BUG-9 修复：packetId 已在 pending 中（客户端 DUP=1 重发），跳过 put 保持去重语义
+        if (pending.containsKey(packetId)) {
+            log.debug("上行 QoS2 PUBLISH 重复 packetId={} 已在 pending，跳过替换 channelId={}",
+                    packetId, ctx.channel().id().asShortText());
+            return true;
+        }
+        if (maxPendingPerConnection > 0 && pending.size() >= maxPendingPerConnection) {
             log.warn("上行 QoS2 pending 超限，关闭连接 packetId={} maxPending={} channelId={}",
                     packetId, maxPendingPerConnection, ctx.channel().id().asShortText());
             ctx.close();
@@ -118,10 +122,8 @@ public final class QoS2InboundService {
         }
         byte[] copy = new byte[payload.length];
         System.arraycopy(payload, 0, copy, 0, payload.length);
-        PendingMessage prev = pending.put(packetId, new PendingMessage(topic, copy, retain, dup, qos));
-        if (prev == null) {
-            pendingDeltaRecorder.accept(1);
-        }
+        pending.put(packetId, new PendingMessage(topic, copy, retain, dup, qos));
+        pendingDeltaRecorder.accept(1);
         return true;
     }
 

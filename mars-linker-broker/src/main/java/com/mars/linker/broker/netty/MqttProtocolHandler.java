@@ -517,20 +517,33 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
 
         Boolean clean = session.cleanSession();
         String clientId = session.clientId();
+        // 判断当前 channel 是否仍是该 clientId 的活跃连接；若已被新连接接管（重连竞态），
+        // 跳过会话级破坏性操作，避免摧毁新连接的会话状态与离线标记（修复 BUG-2）
+        boolean stillCurrent = clientId != null
+                && ctx.channel().id().equals(CLIENT_TO_CHANNEL.get(clientId));
         if (Boolean.TRUE.equals(clean)) {
-            removeAllSubscriptions(ctx.channel().id());
-            if (clientId != null) {
+            if (stillCurrent) {
+                // cleanSession=true：销毁会话，清理订阅索引与 per-channel qosMap
+                removeAllSubscriptions(ctx.channel().id());
                 SESSION_SERVICE.remove(clientId);
                 CLIENT_TO_CHANNEL.remove(clientId);
                 notifyEvent(ctx, EventType.SESSION_DESTROYED, clientId, "session_destroy", null);
             }
         } else {
-            if (clientId != null) {
+            if (stillCurrent) {
+                // cleanSession=false：先将 per-channel 订阅账本拷贝到持久存储（ownedSubscriptionsQos），
+                // 再清理订阅索引与 per-channel qosMap（修复 BUG-1：else 分支也要清理索引避免虚增；
+                // 注意 unbind 必须在 removeAllSubscriptions 之前，否则 qosMap.clear() 会清空
+                // subscriptionsQosRef 指向的同一 map，导致持久订阅丢失）
                 SessionService.Session s = SESSION_SERVICE.get(clientId);
                 if (s != null) {
                     s.unbindChannelSubscriptions();
                 }
+                removeAllSubscriptions(ctx.channel().id());
                 SESSION_SERVICE.markOffline(clientId);
+            } else {
+                // 重连竞态：旧 channel 的订阅索引残留也需清理
+                removeAllSubscriptions(ctx.channel().id());
             }
         }
         if (channels.remove(ctx.channel().id()) != null) {
@@ -622,6 +635,12 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         int willQos = (connectFlags >> 3) & 0x03;
         boolean willFlag = (connectFlags & 0x04) != 0;
         boolean cleanSession = (connectFlags & 0x02) != 0;
+
+        // BUG-8 修复：MQTT-3.1.2-18 — Password Flag=1 但 Username Flag=0 非法
+        if (passwordFlag && !usernameFlag) {
+            closeWithReason(ctx, "CONNECT Password Flag=1 但 Username Flag=0（违反 MQTT-3.1.2-18）");
+            return;
+        }
 
         if (!willFlag && (willRetain || willQos != 0)) {
             closeWithReason(ctx, "CONNECT Will flags 非法(WillFlag=0 但 retain/qos 非 0)");
@@ -722,8 +741,10 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         SessionService.Session persistedSession = SESSION_SERVICE.getOrCreate(clientId);
         SESSION_SERVICE.markOnline(clientId);
         notifyEvent(ctx, EventType.SESSION_CREATED, clientId, "session_create", null);
+        // BUG-10 修复：sessionPresent 应反映会话状态存在性（订阅或离线队列非空），
+        // 而非仅检查订阅非空（MQTT 3.1.1 §3.1.4）
         boolean sessionPresent = !cleanSession && SESSION_SERVICE.get(clientId) != null
-                && !persistedSession.subscriptionsQos().isEmpty();
+                && (!persistedSession.subscriptionsQos().isEmpty() || !persistedSession.offlineQueue.isEmpty());
         if (cleanSession) {
             persistedSession.subscriptionsQos().clear();
             persistedSession.offlineQueue.clear();
