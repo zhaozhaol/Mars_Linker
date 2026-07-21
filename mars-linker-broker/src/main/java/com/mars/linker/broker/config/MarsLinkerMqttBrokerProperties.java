@@ -145,6 +145,13 @@ public class MarsLinkerMqttBrokerProperties {
     private long sessionOfflineTtlMs = 7L * 24 * 60 * 60 * 1000;
 
     /**
+     * 会话 TTL（毫秒）：cleanSession=false 的客户端离线超过此时长后，
+     * 其会话（订阅列表 + 离线消息）将被定时清理并从持久化存储中删除。
+     * 默认 30 天；小于等于 0 表示不过期（不清理）。
+     */
+    private long sessionTtlMs = 30L * 24 * 60 * 60 * 1000;
+
+    /**
      * retain 消息总量上限；小于等于 0 表示不限制。
      */
     private int retainMaxMessages = 100_000;
@@ -601,6 +608,14 @@ public class MarsLinkerMqttBrokerProperties {
 
     public void setSessionOfflineTtlMs(long sessionOfflineTtlMs) {
         this.sessionOfflineTtlMs = sessionOfflineTtlMs;
+    }
+
+    public long getSessionTtlMs() {
+        return sessionTtlMs;
+    }
+
+    public void setSessionTtlMs(long sessionTtlMs) {
+        this.sessionTtlMs = sessionTtlMs;
     }
 
     public int getRetainMaxMessages() {

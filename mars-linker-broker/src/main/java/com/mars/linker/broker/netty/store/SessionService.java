@@ -28,9 +28,11 @@ public final class SessionService {
         private final Map<String, Integer> ownedSubscriptionsQos = new ConcurrentHashMap<>();
         private volatile Map<String, Integer> subscriptionsQosRef = ownedSubscriptionsQos;
         public final Queue<QueuedMessage> offlineQueue = new ConcurrentLinkedQueue<>();
+        volatile long lastActivityMs;
 
         public Session(String clientId) {
             this.clientId = clientId;
+            this.lastActivityMs = System.currentTimeMillis();
         }
 
         public Map<String, Integer> subscriptionsQos() {
@@ -49,6 +51,18 @@ public final class SessionService {
                 ownedSubscriptionsQos.putAll(current);
                 this.subscriptionsQosRef = ownedSubscriptionsQos;
             }
+        }
+
+        public long lastActivityMs() {
+            return lastActivityMs;
+        }
+
+        public void touchActivity() {
+            this.lastActivityMs = System.currentTimeMillis();
+        }
+
+        public void touchActivity(long ts) {
+            this.lastActivityMs = ts;
         }
     }
 
@@ -77,6 +91,7 @@ public final class SessionService {
     private final ConcurrentHashMap<String, Session> offlineSessions = new ConcurrentHashMap<>(4096);
     private final int offlineMaxMessages;
     private final long offlineTtlMs;
+    private final long sessionTtlMs;
     private final ScheduledExecutorService persistExecutor;
     private final AtomicBoolean persistDirty = new AtomicBoolean(false);
     private final Object persistTaskLock = new Object();
@@ -84,18 +99,13 @@ public final class SessionService {
     private final Set<String> dirtyClientIds = ConcurrentHashMap.newKeySet();
     private final Set<String> removedClientIds = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean fullPersistDirty = new AtomicBoolean(false);
+    private volatile ScheduledFuture<?> sessionCleanupTask;
 
-    @Deprecated
-    public static final SessionService INSTANCE = new SessionService(
-            new FileSessionStore(java.nio.file.Paths.get("data", "session-store.tsv")),
-            10_000,
-            7L * 24 * 60 * 60 * 1000
-    );
-
-    private SessionService(SessionStore store, int offlineMaxMessages, long offlineTtlMs) {
+    private SessionService(SessionStore store, int offlineMaxMessages, long offlineTtlMs, long sessionTtlMs) {
         this.store = store;
         this.offlineMaxMessages = offlineMaxMessages;
         this.offlineTtlMs = offlineTtlMs;
+        this.sessionTtlMs = sessionTtlMs;
         ThreadFactory tf = r -> {
             Thread t = new Thread(r, "session-store-persist");
             t.setDaemon(true);
@@ -104,23 +114,60 @@ public final class SessionService {
         this.persistExecutor = Executors.newSingleThreadScheduledExecutor(tf);
         this.sessions.putAll(store.loadAll());
         long now = System.currentTimeMillis();
+        int expiredOnLoad = 0;
+        int emptyShellOnLoad = 0;
         for (Session session : this.sessions.values()) {
             pruneOfflineQueue(session, now);
+        }
+        // 启动时清理过期会话 + 空壳会话（无订阅 + 无离线消息）
+        for (Map.Entry<String, Session> entry : this.sessions.entrySet()) {
+            Session s = entry.getValue();
+            if (s == null) {
+                continue;
+            }
+            boolean expired = sessionTtlMs > 0 && now - s.lastActivityMs > sessionTtlMs;
+            boolean emptyShell = s.subscriptionsQos().isEmpty() && s.offlineQueue.isEmpty();
+            if (expired || emptyShell) {
+                this.sessions.remove(entry.getKey());
+                if (expired) {
+                    expiredOnLoad++;
+                } else {
+                    emptyShellOnLoad++;
+                }
+            }
+        }
+        if (expiredOnLoad > 0) {
+            log.info("启动清理过期会话 {} 个（TTL={}ms）", expiredOnLoad, sessionTtlMs);
+        }
+        if (emptyShellOnLoad > 0) {
+            log.info("启动清理空壳会话 {} 个（无订阅+无离线消息）", emptyShellOnLoad);
+        }
+        if (expiredOnLoad > 0 || emptyShellOnLoad > 0) {
+            persist();
         }
         if (!sessions.isEmpty()) {
             log.info("已加载持久化会话 {} 个", sessions.size());
         }
+        // 定时清理过期离线会话（每小时一次）
+        if (sessionTtlMs > 0) {
+            this.sessionCleanupTask = this.persistExecutor.scheduleAtFixedRate(
+                    this::pruneExpiredSessions, 1, 1, TimeUnit.HOURS);
+        }
     }
 
     public static SessionService create(SessionStore store) {
-        return create(store, 10_000, 7L * 24 * 60 * 60 * 1000);
+        return create(store, 10_000, 7L * 24 * 60 * 60 * 1000, 30L * 24 * 60 * 60 * 1000);
     }
 
     public static SessionService create(SessionStore store, int offlineMaxMessages, long offlineTtlMs) {
+        return create(store, offlineMaxMessages, offlineTtlMs, 30L * 24 * 60 * 60 * 1000);
+    }
+
+    public static SessionService create(SessionStore store, int offlineMaxMessages, long offlineTtlMs, long sessionTtlMs) {
         if (store == null) {
             store = new NoopSessionStore();
         }
-        return new SessionService(store, offlineMaxMessages, offlineTtlMs);
+        return new SessionService(store, offlineMaxMessages, offlineTtlMs, sessionTtlMs);
     }
 
     public Session getOrCreate(String clientId) {
@@ -278,6 +325,10 @@ public final class SessionService {
 
     private void shutdownAndFlush() {
         try {
+            ScheduledFuture<?> cleanup = sessionCleanupTask;
+            if (cleanup != null) {
+                cleanup.cancel(false);
+            }
             flushPersistNow();
             persistExecutor.shutdown();
             if (!persistExecutor.awaitTermination(3, TimeUnit.SECONDS)) {
@@ -311,6 +362,57 @@ public final class SessionService {
             while (session.offlineQueue.size() > offlineMaxMessages) {
                 session.offlineQueue.poll();
             }
+        }
+    }
+
+    /**
+     * 定时清理过期离线会话（仅清理 offlineSessions 中的，不影响在线会话）。
+     * 同时清理 sessions 中的空壳会话（无订阅 + 无离线消息）。
+     */
+    private void pruneExpiredSessions() {
+        if (sessionTtlMs <= 0) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        int expiredOffline = 0;
+        int emptyShell = 0;
+        // 1. 清理 offlineSessions 中超 TTL 的会话
+        for (Map.Entry<String, Session> entry : offlineSessions.entrySet()) {
+            Session s = entry.getValue();
+            if (s == null) {
+                continue;
+            }
+            if (now - s.lastActivityMs > sessionTtlMs) {
+                sessions.remove(entry.getKey());
+                offlineSessions.remove(entry.getKey());
+                removedClientIds.add(entry.getKey());
+                dirtyClientIds.remove(entry.getKey());
+                expiredOffline++;
+            }
+        }
+        // 2. 清理 sessions 中的空壳会话（无订阅 + 无离线消息，不在 offlineSessions 中）
+        for (Map.Entry<String, Session> entry : sessions.entrySet()) {
+            Session s = entry.getValue();
+            if (s == null) {
+                continue;
+            }
+            if (!offlineSessions.containsKey(entry.getKey())
+                    && s.subscriptionsQos().isEmpty()
+                    && s.offlineQueue.isEmpty()) {
+                sessions.remove(entry.getKey());
+                removedClientIds.add(entry.getKey());
+                emptyShell++;
+            }
+        }
+        int total = expiredOffline + emptyShell;
+        if (total > 0) {
+            if (expiredOffline > 0) {
+                log.info("定时清理过期离线会话 {} 个（TTL={}ms）", expiredOffline, sessionTtlMs);
+            }
+            if (emptyShell > 0) {
+                log.info("定时清理空壳会话 {} 个（无订阅+无离线消息）", emptyShell);
+            }
+            persist();
         }
     }
 }

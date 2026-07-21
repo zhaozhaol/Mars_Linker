@@ -40,6 +40,14 @@ public final class FileSessionStore implements SessionStore {
             return new ConcurrentHashMap<>();
         }
         Map<String, SessionService.Session> sessions = new ConcurrentHashMap<>();
+        long fileMtime;
+        try {
+            fileMtime = Files.getLastModifiedTime(storePath).toMillis();
+        } catch (IOException e) {
+            fileMtime = System.currentTimeMillis();
+        }
+        final boolean[] sawSess = {false};
+        final long fallbackMtime = fileMtime;
         try (Stream<String> stream = Files.lines(storePath, StandardCharsets.UTF_8)) {
             String[] headerHolder = {null};
             stream.forEach(line -> {
@@ -53,13 +61,22 @@ public final class FileSessionStore implements SessionStore {
                     return;
                 }
                 String[] p = line.split("\t");
-                if (p.length < 4) {
+                if (p.length < 1) {
                     return;
                 }
                 String kind = p[0];
-                String clientId = p[1];
-                SessionService.Session session = sessions.computeIfAbsent(clientId, SessionService.Session::new);
-                if ("SUB".equals(kind) && p.length >= 4) {
+                if ("SESS".equals(kind) && p.length >= 3) {
+                    String clientId = p[1];
+                    SessionService.Session session = sessions.computeIfAbsent(clientId, SessionService.Session::new);
+                    try {
+                        long lastActivityMs = Long.parseLong(p[2]);
+                        session.touchActivity(lastActivityMs);
+                        sawSess[0] = true;
+                    } catch (NumberFormatException ignored) {
+                    }
+                } else if ("SUB".equals(kind) && p.length >= 4) {
+                    String clientId = p[1];
+                    SessionService.Session session = sessions.computeIfAbsent(clientId, SessionService.Session::new);
                     try {
                         int qos = Integer.parseInt(p[3]);
                         if (qos < 0 || qos > 2) {
@@ -75,6 +92,8 @@ public final class FileSessionStore implements SessionStore {
                     } catch (NumberFormatException ignored) {
                     }
                 } else if ("MSG".equals(kind) && p.length >= 6) {
+                    String clientId = p[1];
+                    SessionService.Session session = sessions.computeIfAbsent(clientId, SessionService.Session::new);
                     try {
                         String topic = p[2];
                         int qos = Integer.parseInt(p[3]);
@@ -100,6 +119,14 @@ public final class FileSessionStore implements SessionStore {
             log.warn("会话持久化读取失败 path={}", storePath, e);
             return new ConcurrentHashMap<>();
         }
+        // 旧格式兼容：持久化文件无 SESS 行时，用文件最后修改时间作为 lastActivityMs
+        if (!sawSess[0] && !sessions.isEmpty()) {
+            for (SessionService.Session s : sessions.values()) {
+                s.touchActivity(fallbackMtime);
+            }
+            log.info("检测到旧格式持久化文件（无 SESS 行），{} 个会话 lastActivityMs 回退为文件修改时间",
+                    sessions.size());
+        }
         return sessions;
     }
 
@@ -124,6 +151,7 @@ public final class FileSessionStore implements SessionStore {
                 if (s == null) {
                     continue;
                 }
+                lines.add("SESS\t" + s.clientId + "\t" + s.lastActivityMs());
                 for (Map.Entry<String, Integer> sub : s.subscriptionsQos().entrySet()) {
                     lines.add("SUB\t" + s.clientId + "\t" + sub.getKey() + "\t" + (sub.getValue() == null ? 0 : sub.getValue()));
                 }

@@ -81,6 +81,7 @@ mars:
       # --- Session 与 Retain ---
       session-offline-max-messages: 5000   # 每个 client 离线消息上限；<=0 不限
       session-offline-ttl-ms: 604800000    # 离线消息保留时长（毫秒，7天）；<=0 不过期
+      session-ttl-ms: 2592000000           # 会话 TTL（毫秒，30天）；cleanSession=false 客户端离线超此时长后清理会话；<=0 不过期
       retain-max-messages: 200000          # retain 消息总量上限；<=0 不限
       retain-ttl-ms: 2592000000            # retain 保留时长（毫秒，30天）；<=0 不过期
 

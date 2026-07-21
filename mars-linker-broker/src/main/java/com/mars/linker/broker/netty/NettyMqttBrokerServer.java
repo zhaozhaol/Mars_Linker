@@ -91,7 +91,8 @@ public class NettyMqttBrokerServer implements SmartLifecycle {
                 SessionService.create(
                         this.sessionStore,
                         properties.getSessionOfflineMaxMessages(),
-                        properties.getSessionOfflineTtlMs()
+                        properties.getSessionOfflineTtlMs(),
+                        properties.getSessionTtlMs()
                 ),
                 this.retainStore,
                 eventNotifyRouter

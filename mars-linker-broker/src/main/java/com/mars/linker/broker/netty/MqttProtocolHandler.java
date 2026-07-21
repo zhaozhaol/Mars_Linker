@@ -427,6 +427,17 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
             return;
         }
 
+        // 更新持久化会话活跃时间（用于会话 TTL 清理；CONNECT 在 handleConnect 中单独 touch）
+        if (messageType != 1) {
+            String cid = session.clientId();
+            if (cid != null) {
+                SessionService.Session persistedSession = SESSION_SERVICE.get(cid);
+                if (persistedSession != null) {
+                    persistedSession.touchActivity();
+                }
+            }
+        }
+
         switch (messageType) {
             case 1: // CONNECT
                 handleConnect(ctx, frame, remainingLength);
@@ -739,6 +750,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         }
 
         SessionService.Session persistedSession = SESSION_SERVICE.getOrCreate(clientId);
+        persistedSession.touchActivity();
         SESSION_SERVICE.markOnline(clientId);
         notifyEvent(ctx, EventType.SESSION_CREATED, clientId, "session_create", null);
         // BUG-10 修复：sessionPresent 应反映会话状态存在性（订阅或离线队列非空），

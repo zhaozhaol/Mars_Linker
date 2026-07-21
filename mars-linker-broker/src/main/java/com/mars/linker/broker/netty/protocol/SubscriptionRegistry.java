@@ -34,21 +34,31 @@ public final class SubscriptionRegistry {
             if (ss == null) {
                 return;
             }
-            shareSubscribers
+            boolean added = shareSubscribers
                     .computeIfAbsent(ss.group, k -> new ConcurrentHashMap<>())
                     .computeIfAbsent(ss.filter, k -> new CopyOnWriteArraySet<>())
                     .add(channelId);
-            cachedSubscriptionTotal.incrementAndGet();
+            if (added) {
+                cachedSubscriptionTotal.incrementAndGet();
+            }
             return;
         }
         if (TopicFilterSupport.isExactTopic(topicFilter)) {
-            exactTopicSubscribers.computeIfAbsent(topicFilter, k -> new CopyOnWriteArraySet<>()).add(channelId);
-            cachedSubscriptionTotal.incrementAndGet();
+            boolean added = exactTopicSubscribers
+                    .computeIfAbsent(topicFilter, k -> new CopyOnWriteArraySet<>())
+                    .add(channelId);
+            if (added) {
+                cachedSubscriptionTotal.incrementAndGet();
+            }
             return;
         }
-        wildcardSubscribers.computeIfAbsent(topicFilter, k -> new CopyOnWriteArraySet<>()).add(channelId);
-        wildcardFilterIndex.add(topicFilter);
-        cachedSubscriptionTotal.incrementAndGet();
+        boolean added = wildcardSubscribers
+                .computeIfAbsent(topicFilter, k -> new CopyOnWriteArraySet<>())
+                .add(channelId);
+        if (added) {
+            wildcardFilterIndex.add(topicFilter);
+            cachedSubscriptionTotal.incrementAndGet();
+        }
     }
 
     public boolean remove(ChannelId channelId, String topicFilter) {
