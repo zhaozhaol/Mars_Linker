@@ -1,9 +1,12 @@
 package com.mars.linker.broker.netty.store;
 
+import com.mars.linker.broker.netty.protocol.TopicFilterSupport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
@@ -22,6 +25,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class SessionService {
     private static final Logger log = LoggerFactory.getLogger(SessionService.class);
     private static final long PERSIST_DEBOUNCE_MS = 200L;
+    private static final long FULL_PERSIST_INTERVAL_MS = 5 * 60 * 1000L; // 5 分钟全量写一次
 
     public static final class Session {
         public final String clientId;
@@ -89,6 +93,7 @@ public final class SessionService {
     private final SessionStore store;
     private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>(16384);
     private final ConcurrentHashMap<String, Session> offlineSessions = new ConcurrentHashMap<>(4096);
+    private final ConcurrentHashMap<String, Set<String>> filterToOfflineClientIds = new ConcurrentHashMap<>();
     private final int offlineMaxMessages;
     private final long offlineTtlMs;
     private final long sessionTtlMs;
@@ -100,6 +105,7 @@ public final class SessionService {
     private final Set<String> removedClientIds = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean fullPersistDirty = new AtomicBoolean(false);
     private volatile ScheduledFuture<?> sessionCleanupTask;
+    private volatile ScheduledFuture<?> fullPersistTask;
 
     private SessionService(SessionStore store, int offlineMaxMessages, long offlineTtlMs, long sessionTtlMs) {
         this.store = store;
@@ -153,6 +159,12 @@ public final class SessionService {
             this.sessionCleanupTask = this.persistExecutor.scheduleAtFixedRate(
                     this::pruneExpiredSessions, 1, 1, TimeUnit.HOURS);
         }
+        // 定时全量持久化（每 5 分钟一次，作为增量持久化的安全网 + 文件压缩）
+        this.fullPersistTask = this.persistExecutor.scheduleAtFixedRate(() -> {
+            fullPersistDirty.set(true);
+            persistDirty.set(true);
+            schedulePersistIfNeeded();
+        }, FULL_PERSIST_INTERVAL_MS, FULL_PERSIST_INTERVAL_MS, TimeUnit.MILLISECONDS);
     }
 
     public static SessionService create(SessionStore store) {
@@ -185,7 +197,7 @@ public final class SessionService {
         sessions.remove(clientId);
         removedClientIds.add(clientId);
         dirtyClientIds.remove(clientId);
-        persist();
+        scheduleIncrementalPersist();
     }
 
     public Collection<Session> allSessions() {
@@ -200,11 +212,26 @@ public final class SessionService {
         Session s = sessions.get(clientId);
         if (s != null && !s.subscriptionsQos().isEmpty()) {
             offlineSessions.put(clientId, s);
+            for (String filter : s.subscriptionsQos().keySet()) {
+                filterToOfflineClientIds.computeIfAbsent(filter, k -> ConcurrentHashMap.newKeySet()).add(clientId);
+            }
         }
     }
 
     public void markOnline(String clientId) {
-        offlineSessions.remove(clientId);
+        Session s = offlineSessions.remove(clientId);
+        if (s != null) {
+            removeFromOfflineFilterIndex(clientId, s);
+        }
+    }
+
+    private void removeFromOfflineFilterIndex(String clientId, Session s) {
+        for (String filter : s.subscriptionsQos().keySet()) {
+            filterToOfflineClientIds.computeIfPresent(filter, (k, v) -> {
+                v.remove(clientId);
+                return v.isEmpty() ? null : v;
+            });
+        }
     }
 
     public int offlineSessionCount() {
@@ -228,6 +255,15 @@ public final class SessionService {
         schedulePersistIfNeeded();
     }
 
+    /**
+     * 仅调度增量刷盘，不设置 fullPersistDirty。
+     * 用于 remove/pruneExpiredSessions 等只需增量更新的场景，避免全量写文件。
+     */
+    private void scheduleIncrementalPersist() {
+        persistDirty.set(true);
+        schedulePersistIfNeeded();
+    }
+
     public boolean enqueueOfflineMessage(Session session, String topic, byte[] payload, boolean retain, int qos) {
         if (session == null || topic == null || payload == null) {
             return false;
@@ -237,6 +273,45 @@ public final class SessionService {
         session.offlineQueue.add(new QueuedMessage(topic, copy, retain, qos, System.currentTimeMillis()));
         pruneOfflineQueue(session, System.currentTimeMillis());
         return true;
+    }
+
+    /**
+     * 用离线 filter 索引快速查找匹配的离线会话并入队消息。
+     * 复杂度 O(uniqueOfflineFilters) 而非 O(offlineSessions × subscriptions)。
+     */
+    public void enqueueForOfflineMatches(String topic, byte[] payload, boolean retain, int pubQos) {
+        if (filterToOfflineClientIds.isEmpty()) {
+            return;
+        }
+        Map<String, Integer> clientIdToMaxQos = new HashMap<>();
+        for (Map.Entry<String, Set<String>> entry : filterToOfflineClientIds.entrySet()) {
+            String filter = entry.getKey();
+            if (!TopicFilterSupport.matchTopicFilter(filter, topic)) {
+                continue;
+            }
+            Set<String> clientIds = entry.getValue();
+            for (String clientId : clientIds) {
+                Session session = sessions.get(clientId);
+                if (session == null) {
+                    continue;
+                }
+                Integer qos = session.subscriptionsQos().get(filter);
+                if (qos == null) {
+                    continue;
+                }
+                clientIdToMaxQos.merge(clientId, qos, Math::max);
+            }
+        }
+        for (Map.Entry<String, Integer> entry : clientIdToMaxQos.entrySet()) {
+            Session session = sessions.get(entry.getKey());
+            if (session == null) {
+                continue;
+            }
+            int eff = Math.max(Math.min(pubQos, entry.getValue()), 0);
+            if (enqueueOfflineMessage(session, topic, payload, retain, eff)) {
+                persist(session.clientId);
+            }
+        }
     }
 
     private void flushPersistIfDirty() {
@@ -254,19 +329,27 @@ public final class SessionService {
                 removedClientIds.clear();
                 return;
             }
-            for (String clientId : removedClientIds) {
-                store.deleteClient(clientId);
+            if (dirtyClientIds.isEmpty() && removedClientIds.isEmpty()) {
+                return;
             }
-            removedClientIds.clear();
+            // 批量增量持久化：单次 I/O 完成所有 dirty/removed 客户端的更新
+            Map<String, Session> dirty = new HashMap<>();
             for (String clientId : dirtyClientIds) {
                 Session s = sessions.get(clientId);
                 if (s != null) {
-                    store.persistClient(s);
-                } else {
-                    store.deleteClient(clientId);
+                    dirty.put(clientId, s);
                 }
             }
+            Set<String> removed = new HashSet<>(removedClientIds);
+            // dirtyClientIds 中 session 已不存在的也转入 removed
+            for (String clientId : dirtyClientIds) {
+                if (sessions.get(clientId) == null) {
+                    removed.add(clientId);
+                }
+            }
+            store.persistIncremental(dirty, removed, sessions);
             dirtyClientIds.clear();
+            removedClientIds.clear();
         } finally {
             synchronized (persistTaskLock) {
                 pendingPersistTask = null;
@@ -292,6 +375,8 @@ public final class SessionService {
     public synchronized void resetForTests() {
         flushPersistNow();
         sessions.clear();
+        offlineSessions.clear();
+        filterToOfflineClientIds.clear();
         dirtyClientIds.clear();
         removedClientIds.clear();
         fullPersistDirty.set(false);
@@ -328,6 +413,10 @@ public final class SessionService {
             ScheduledFuture<?> cleanup = sessionCleanupTask;
             if (cleanup != null) {
                 cleanup.cancel(false);
+            }
+            ScheduledFuture<?> fullPersist = fullPersistTask;
+            if (fullPersist != null) {
+                fullPersist.cancel(false);
             }
             flushPersistNow();
             persistExecutor.shutdown();
@@ -385,6 +474,7 @@ public final class SessionService {
             if (now - s.lastActivityMs > sessionTtlMs) {
                 sessions.remove(entry.getKey());
                 offlineSessions.remove(entry.getKey());
+                removeFromOfflineFilterIndex(entry.getKey(), s);
                 removedClientIds.add(entry.getKey());
                 dirtyClientIds.remove(entry.getKey());
                 expiredOffline++;
@@ -412,7 +502,7 @@ public final class SessionService {
             if (emptyShell > 0) {
                 log.info("定时清理空壳会话 {} 个（无订阅+无离线消息）", emptyShell);
             }
-            persist();
+            scheduleIncrementalPersist();
         }
     }
 }

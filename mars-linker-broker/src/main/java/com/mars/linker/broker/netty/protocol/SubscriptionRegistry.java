@@ -25,6 +25,8 @@ public final class SubscriptionRegistry {
     private final Map<String, CopyOnWriteArraySet<ChannelId>> wildcardSubscribers = new ConcurrentHashMap<>(256);
     private final TopicFilterSupport.TopicFilterIndex wildcardFilterIndex = new TopicFilterSupport.TopicFilterIndex();
     private final Map<String, Map<String, CopyOnWriteArraySet<ChannelId>>> shareSubscribers = new ConcurrentHashMap<>(64);
+    // OPT-12: 每个 group 维护 TopicFilterIndex，匹配时用索引替代全量遍历
+    private final Map<String, TopicFilterSupport.TopicFilterIndex> shareFilterIndexes = new ConcurrentHashMap<>(64);
     private final Map<String, AtomicInteger> shareRoundRobin = new ConcurrentHashMap<>(64);
     private final AtomicInteger cachedSubscriptionTotal = new AtomicInteger(0);
 
@@ -40,6 +42,9 @@ public final class SubscriptionRegistry {
                     .add(channelId);
             if (added) {
                 cachedSubscriptionTotal.incrementAndGet();
+                // OPT-12: 同步加入 group 的 TopicFilterIndex（idempotent，已存在则 no-op）
+                shareFilterIndexes.computeIfAbsent(ss.group, k -> new TopicFilterSupport.TopicFilterIndex())
+                        .add(ss.filter);
             }
             return;
         }
@@ -72,7 +77,16 @@ public final class SubscriptionRegistry {
             shareSubscribers.computeIfPresent(ss.group, (group, filterMap) -> {
                 filterMap.computeIfPresent(ss.filter, (filter, subscribers) -> {
                     r[0] = subscribers.remove(channelId);
-                    return subscribers.isEmpty() ? null : subscribers;                });
+                    if (subscribers.isEmpty()) {
+                        // OPT-12: filter 订阅者清空，从 group 索引移除
+                        TopicFilterSupport.TopicFilterIndex idx = shareFilterIndexes.get(group);
+                        if (idx != null) {
+                            idx.remove(filter);
+                        }
+                        return null;
+                    }
+                    return subscribers;
+                });
                 return filterMap.isEmpty() ? null : filterMap;
             });
             if (r[0]) cachedSubscriptionTotal.decrementAndGet();
@@ -130,12 +144,18 @@ public final class SubscriptionRegistry {
                 if (filters == null || filters.isEmpty()) {
                     continue;
                 }
-                for (Map.Entry<String, CopyOnWriteArraySet<ChannelId>> fe : filters.entrySet()) {
-                    String filter = fe.getKey();
-                    if (!TopicFilterSupport.matchTopicFilter(filter, topic)) {
+                // OPT-12: 用 TopicFilterIndex 匹配，替代遍历所有 filter 做 matchTopicFilter
+                TopicFilterSupport.TopicFilterIndex idx = shareFilterIndexes.get(group);
+                if (idx == null) {
+                    continue;
+                }
+                Set<String> matchedFilters = idx.match(topic);
+                for (String filter : matchedFilters) {
+                    CopyOnWriteArraySet<ChannelId> subscribers = filters.get(filter);
+                    if (subscribers == null || subscribers.isEmpty()) {
                         continue;
                     }
-                    ChannelId selected = selectShareSubscriber(group, filter, fe.getValue(), activeProbe);
+                    ChannelId selected = selectShareSubscriber(group, filter, subscribers, activeProbe);
                     if (selected == null) {
                         continue;
                     }
@@ -154,6 +174,7 @@ public final class SubscriptionRegistry {
         wildcardSubscribers.clear();
         wildcardFilterIndex.clear();
         shareSubscribers.clear();
+        shareFilterIndexes.clear();
         shareRoundRobin.clear();
         cachedSubscriptionTotal.set(0);
     }
@@ -189,17 +210,31 @@ public final class SubscriptionRegistry {
         if (subscribers == null || subscribers.isEmpty()) {
             return null;
         }
-        ChannelId[] arr = subscribers.toArray(new ChannelId[0]);
-        if (arr.length == 0) {
+        int size = subscribers.size();
+        if (size == 0) {
             return null;
         }
         String key = group + "|" + filter;
         AtomicInteger rr = shareRoundRobin.computeIfAbsent(key, k -> new AtomicInteger(0));
-        int start = Math.floorMod(rr.getAndIncrement() & 0x7FFFFFFF, arr.length);
-        for (int i = 0; i < arr.length; i++) {
-            ChannelId candidate = arr[(start + i) % arr.length];
-            if (activeProbe.isActive(candidate)) {
+        int start = Math.floorMod(rr.getAndIncrement() & 0x7FFFFFFF, size);
+        // 用 iterator 遍历避免 toArray 数组拷贝；两轮遍历实现轮询
+        int idx = 0;
+        for (ChannelId candidate : subscribers) {
+            if (idx >= start && activeProbe.isActive(candidate)) {
                 return candidate;
+            }
+            idx++;
+        }
+        if (start > 0) {
+            idx = 0;
+            for (ChannelId candidate : subscribers) {
+                if (idx >= start) {
+                    break;
+                }
+                if (activeProbe.isActive(candidate)) {
+                    return candidate;
+                }
+                idx++;
             }
         }
         return null;

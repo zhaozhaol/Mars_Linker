@@ -390,7 +390,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         try {
         ClientSessionContext session = ClientSessionContext.of(ctx);
         // EmbeddedChannel 等场景下 channelActive 顺序可能与真机略有差异，此处幂等登记，避免首包时 channels 未就绪。
-        channels.put(ctx.channel().id(), ctx);
+        channels.putIfAbsent(ctx.channel().id(), ctx);
         session.lastPacketAtMs(System.currentTimeMillis());
         if (!frame.isReadable()) {
             session.closeReason(CloseReason.PROTOCOL_ERROR);
@@ -428,12 +428,14 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         }
 
         // 更新持久化会话活跃时间（用于会话 TTL 清理；CONNECT 在 handleConnect 中单独 touch）
+        // 优化：每 5 秒 touch 一次，避免每包都做 Map get + volatile 写
         if (messageType != 1) {
             String cid = session.clientId();
             if (cid != null) {
+                long now = System.currentTimeMillis();
                 SessionService.Session persistedSession = SESSION_SERVICE.get(cid);
-                if (persistedSession != null) {
-                    persistedSession.touchActivity();
+                if (persistedSession != null && now - persistedSession.lastActivityMs() > 5000L) {
+                    persistedSession.touchActivity(now);
                 }
             }
         }
@@ -539,6 +541,12 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                 SESSION_SERVICE.remove(clientId);
                 CLIENT_TO_CHANNEL.remove(clientId);
                 notifyEvent(ctx, EventType.SESSION_DESTROYED, clientId, "session_destroy", null);
+            } else {
+                // BUG-13 修复：cleanSession=true + 重连竞态。
+                // 此时旧 channel 的 session/CLIENT_TO_CHANNEL 都属于新连接，不能销毁。
+                // 但旧 channelId 仍残留在 SUBSCRIPTION_REGISTRY 中必须清理，否则每次重连
+                // +1，UI 计数虚增（明细数 < 显示数），且 PublishRouter 会反复命中死 channel。
+                removeAllSubscriptions(ctx.channel().id());
             }
         } else {
             if (stillCurrent) {
@@ -776,6 +784,7 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
             return;
         }
         session.connected(Boolean.TRUE);
+        session.connectedAtMs(System.currentTimeMillis());
         ByteBuf connAck;
         if (protocolLevel == 0x05) {
             connAck = Unpooled.buffer(5)
@@ -806,9 +815,9 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                 int subQos = qosForSubscription(ctx.channel().id(), qm.topic);
                 int eff = Math.min(qm.qos, subQos);
                 if (eff == 0) {
-                    byte[] topicBytes = qm.topic.getBytes(StandardCharsets.UTF_8);
+                    byte[] topicBytes = TopicEncodingCache.get(qm.topic);
                     int rl = 2 + topicBytes.length + qm.payload.length;
-                    ByteBuf out = Unpooled.buffer();
+                    ByteBuf out = ctx.alloc().buffer(5 + rl);
                     int fh = 0x30 | (qm.retain ? 0x01 : 0x00);
                     out.writeByte(fh);
                     writeRemainingLength(out, rl);
@@ -1039,18 +1048,25 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
             closeWithReason(ctx, "PUBLISH 应用负载长度非法");
             return;
         }
-        byte[] msgBytes = new byte[payloadBytes];
-        payload.readBytes(msgBytes);
+        ByteBuf payloadBuf = payload.readRetainedSlice(payloadBytes);
+        try {
         if (qos == 2) {
+            byte[] msgBytes = new byte[payloadBytes];
+            payloadBuf.readBytes(msgBytes);
             qos2Inbound.onInboundQos2Publish(ctx, packetId, topic, msgBytes, retain, dup, qos);
             return;
         }
-        int delivered = dispatchInboundPublish(ctx, topic, msgBytes, retain, qos > 0 && dup, qos);
+        int delivered = dispatchInboundPublish(ctx, topic, payloadBuf, retain, qos > 0 && dup, qos);
         if (qos == 1) {
             writePubAck(ctx, packetId);
         }
-        log.info("PUBLISH topic={} pubQos={} dup={} retain={} bytes={} -> 投递{}路 channelId={}",
-                topic, qos, dup, retain, msgBytes.length, delivered, ctx.channel().id().asShortText());
+        if (log.isDebugEnabled()) {
+            log.debug("PUBLISH topic={} pubQos={} dup={} retain={} bytes={} -> 投递{}路 channelId={}",
+                    topic, qos, dup, retain, payloadBytes, delivered, ctx.channel().id().asShortText());
+        }
+        } finally {
+            payloadBuf.release();
+        }
     }
 
     /**
@@ -1101,12 +1117,26 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
                                        boolean retain,
                                        boolean dup,
                                        int qos) {
+        ByteBuf buf = Unpooled.wrappedBuffer(payload);
+        try {
+            return dispatchInboundPublish(ctx, topic, buf, retain, dup, qos);
+        } finally {
+            buf.release();
+        }
+    }
+
+    private int dispatchInboundPublish(ChannelHandlerContext ctx,
+                                       String topic,
+                                       ByteBuf payload,
+                                       boolean retain,
+                                       boolean dup,
+                                       int qos) {
         DelayedTarget delayed = parseDelayedTopic(topic);
         if (delayed != null) {
             long delaySeconds = delayed.delaySeconds;
             String targetTopic = delayed.targetTopic;
-            byte[] copy = new byte[payload.length];
-            System.arraycopy(payload, 0, copy, 0, payload.length);
+            byte[] copy = new byte[payload.readableBytes()];
+            payload.getBytes(payload.readerIndex(), copy);
             ctx.executor().schedule(() -> {
                 int delivered = publishToSubscribers(targetTopic, copy, retain, dup, qos);
                 METRIC_PUBLISH_IN_TOTAL.increment();
@@ -1120,7 +1150,11 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         int delivered = publishToSubscribers(topic, payload, retain, dup, qos);
         METRIC_PUBLISH_IN_TOTAL.increment();
         METRIC_PUBLISH_OUT_TOTAL.add(delivered);
-        processRetainStore(topic, payload, qos, retain);
+        if (retain) {
+            byte[] retainBytes = new byte[payload.readableBytes()];
+            payload.getBytes(payload.readerIndex(), retainBytes);
+            processRetainStore(topic, retainBytes, qos, true);
+        }
         return delivered;
     }
 
@@ -1161,6 +1195,15 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
      * @return 实际尝试写出的订阅者路数（含写失败时仍计数尝试，当前未对 write 失败单独统计）
      */
     private int publishToSubscribers(String topic, byte[] payload, boolean retain, boolean dup, int pubQos) {
+        ByteBuf buf = Unpooled.wrappedBuffer(payload);
+        try {
+            return publishToSubscribers(topic, buf, retain, dup, pubQos);
+        } finally {
+            buf.release();
+        }
+    }
+
+    private int publishToSubscribers(String topic, ByteBuf payload, boolean retain, boolean dup, int pubQos) {
         return PublishRouter.publishAndEnqueueOffline(
                 topic,
                 payload,
@@ -1434,9 +1477,62 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
         if (ctx == null || !ctx.channel().isActive()) {
             return false;
         }
-        ClientSessionContext.of(ctx).closeReason(CloseReason.KICKED_BY_NEW_CONNECTION);
+        ClientSessionContext.of(ctx).closeReason(CloseReason.KICKED_BY_ADMIN);
+        log.warn("管理员剔除连接 clientId={} reason={} remoteAddress={}",
+                clientId, reason == null ? "kicked_by_admin" : reason,
+                ctx.channel().remoteAddress());
+        notifyEvent(ctx, EventType.CONNECTION_KICKED, clientId, "kicked_by_admin", null);
         ctx.close();
         return true;
+    }
+
+    /**
+     * 列出当前所有在线客户端的连接信息（用于管理 UI 展示）。
+     * <p>
+     * 遍历 CLIENT_TO_CHANNEL 快照，对每个活跃连接提取 clientId、远程地址、协议版本、
+     * cleanSession、keepAlive、连接时间、最后活动时间、订阅数。
+     *
+     * @return 在线客户端信息列表，按连接时间升序排列
+     */
+    public List<Map<String, Object>> listOnlineClients() {
+        List<Map<String, Object>> result = new ArrayList<>(CLIENT_TO_CHANNEL.size());
+        long now = System.currentTimeMillis();
+        for (Map.Entry<String, ChannelId> entry : CLIENT_TO_CHANNEL.entrySet()) {
+            String clientId = entry.getKey();
+            ChannelHandlerContext ctx = channels.get(entry.getValue());
+            if (ctx == null || !ctx.channel().isActive()) {
+                continue;
+            }
+            ClientSessionContext session = ClientSessionContext.of(ctx);
+            // 仅返回已完成 CONNECT 的连接
+            if (!Boolean.TRUE.equals(session.connected())) {
+                continue;
+            }
+            Map<String, Object> info = new java.util.LinkedHashMap<>(12);
+            info.put("clientId", clientId);
+            info.put("remoteAddress", ctx.channel().remoteAddress() == null ? "" : ctx.channel().remoteAddress().toString());
+            info.put("protocolLevel", session.protocolLevel() == null ? 0 : session.protocolLevel());
+            info.put("cleanSession", Boolean.TRUE.equals(session.cleanSession()));
+            info.put("keepAliveSeconds", session.keepAliveSeconds() == null ? 0 : session.keepAliveSeconds());
+            long connectedAt = session.connectedAtMs() == null ? 0L : session.connectedAtMs();
+            info.put("connectedAtMs", connectedAt);
+            info.put("connectedDurationMs", connectedAt > 0 ? now - connectedAt : 0);
+            long lastPacketAt = session.lastPacketAtMs() == null ? 0L : session.lastPacketAtMs();
+            info.put("lastPacketAtMs", lastPacketAt);
+            info.put("idleMs", lastPacketAt > 0 ? now - lastPacketAt : (connectedAt > 0 ? now - connectedAt : 0));
+            // 订阅数：从 per-channel TOPIC_SUBSCRIPTIONS 集合获取
+            Set<String> topics = ctx.channel().attr(TOPIC_SUBSCRIPTIONS).get();
+            info.put("subscriptionCount", topics == null ? 0 : topics.size());
+            info.put("traceId", session.traceId() == null ? "" : session.traceId());
+            result.add(info);
+        }
+        // 按连接时间升序排列（最早连接的在前）
+        result.sort((a, b) -> {
+            long ta = (long) a.getOrDefault("connectedAtMs", 0L);
+            long tb = (long) b.getOrDefault("connectedAtMs", 0L);
+            return Long.compare(ta, tb);
+        });
+        return result;
     }
 
     private void replayRetainedMessages(ChannelHandlerContext ctx, String topicFilter) {
@@ -1459,10 +1555,10 @@ public class MqttProtocolHandler extends SimpleChannelInboundHandler<ByteBuf> {
     }
 
     private void writeRetainedToSubscriber(ChannelHandlerContext ctx, String topic, byte[] payload, int qos) {
-        byte[] topicBytes = topic.getBytes(StandardCharsets.UTF_8);
+        byte[] topicBytes = TopicEncodingCache.get(topic);
         if (qos <= 0) {
             int rl = 2 + topicBytes.length + payload.length;
-            ByteBuf out = Unpooled.buffer();
+            ByteBuf out = ctx.alloc().buffer(5 + rl);
             // retain=1 qos=0
             out.writeByte(0x31);
             writeRemainingLength(out, rl);

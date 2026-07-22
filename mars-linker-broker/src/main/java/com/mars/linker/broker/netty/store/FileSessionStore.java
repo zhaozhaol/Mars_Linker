@@ -11,8 +11,10 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 import com.mars.linker.broker.netty.protocol.TopicFilterSupport;
@@ -151,18 +153,7 @@ public final class FileSessionStore implements SessionStore {
                 if (s == null) {
                     continue;
                 }
-                lines.add("SESS\t" + s.clientId + "\t" + s.lastActivityMs());
-                for (Map.Entry<String, Integer> sub : s.subscriptionsQos().entrySet()) {
-                    lines.add("SUB\t" + s.clientId + "\t" + sub.getKey() + "\t" + (sub.getValue() == null ? 0 : sub.getValue()));
-                }
-                for (SessionService.QueuedMessage q : s.offlineQueue) {
-                    if (q.payload == null || q.payload.length > MAX_PERSISTED_MESSAGE_BYTES) {
-                        continue;
-                    }
-                    lines.add("MSG\t" + s.clientId + "\t" + q.topic + "\t" + q.qos + "\t" + (q.retain ? "1" : "0")
-                            + "\t" + q.createdAtMs
-                            + "\t" + Base64.getEncoder().encodeToString(q.payload));
-                }
+                appendSessionLines(lines, s);
             }
             Path tmp = storePath.resolveSibling(storePath.getFileName().toString() + ".tmp");
             Files.write(tmp, lines, StandardCharsets.UTF_8,
@@ -170,6 +161,83 @@ public final class FileSessionStore implements SessionStore {
             Files.move(tmp, storePath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException e) {
             log.warn("会话持久化写入失败 path={}", storePath, e);
+        }
+    }
+
+    @Override
+    public boolean supportsIncrementalPersist() {
+        return true;
+    }
+
+    /**
+     * 批量增量持久化：单次读-改-写完成所有 dirty/removed 客户端的更新。
+     * 相比全量 persistAll，避免了序列化全部内存会话的开销。
+     */
+    @Override
+    public synchronized void persistIncremental(
+            Map<String, SessionService.Session> dirtySessions,
+            Set<String> removedClientIds,
+            Map<String, SessionService.Session> allSessions) {
+        if (dirtySessions.isEmpty() && removedClientIds.isEmpty()) {
+            return;
+        }
+        Set<String> affectedClientIds = new HashSet<>(removedClientIds);
+        affectedClientIds.addAll(dirtySessions.keySet());
+
+        try {
+            List<String> lines = new ArrayList<>();
+            boolean headerFound = false;
+            if (Files.exists(storePath)) {
+                for (String line : Files.readAllLines(storePath, StandardCharsets.UTF_8)) {
+                    if (line.startsWith("#")) {
+                        if (!headerFound && SESSION_STORE_HEADER.equals(line)) {
+                            headerFound = true;
+                        }
+                        lines.add(line);
+                        continue;
+                    }
+                    String[] p = line.split("\t", 3);
+                    if (p.length >= 2 && affectedClientIds.contains(p[1])) {
+                        continue; // skip old lines for affected clients
+                    }
+                    lines.add(line);
+                }
+            }
+            if (!headerFound) {
+                lines.add(0, SESSION_STORE_HEADER);
+                Path parent = storePath.getParent();
+                if (parent != null) {
+                    Files.createDirectories(parent);
+                }
+            }
+            for (SessionService.Session s : dirtySessions.values()) {
+                if (s == null) {
+                    continue;
+                }
+                appendSessionLines(lines, s);
+            }
+            Path tmp = storePath.resolveSibling(storePath.getFileName().toString() + ".tmp");
+            Files.write(tmp, lines, StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+            Files.move(tmp, storePath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException e) {
+            log.warn("增量持久化失败 path={} dirty={} removed={}", storePath,
+                    dirtySessions.size(), removedClientIds.size(), e);
+        }
+    }
+
+    private void appendSessionLines(List<String> lines, SessionService.Session s) {
+        lines.add("SESS\t" + s.clientId + "\t" + s.lastActivityMs());
+        for (Map.Entry<String, Integer> sub : s.subscriptionsQos().entrySet()) {
+            lines.add("SUB\t" + s.clientId + "\t" + sub.getKey() + "\t" + (sub.getValue() == null ? 0 : sub.getValue()));
+        }
+        for (SessionService.QueuedMessage q : s.offlineQueue) {
+            if (q.payload == null || q.payload.length > MAX_PERSISTED_MESSAGE_BYTES) {
+                continue;
+            }
+            lines.add("MSG\t" + s.clientId + "\t" + q.topic + "\t" + q.qos + "\t" + (q.retain ? "1" : "0")
+                    + "\t" + q.createdAtMs
+                    + "\t" + Base64.getEncoder().encodeToString(q.payload));
         }
     }
 

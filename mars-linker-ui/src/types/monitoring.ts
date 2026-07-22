@@ -144,3 +144,32 @@ export interface TopicRateLimitOverview {
   rules: number
   stats: Record<string, TopicRateLimitStats>
 }
+
+/** 在线客户端连接明细 */
+export interface OnlineClientInfo {
+  clientId: string
+  remoteAddress: string
+  protocolLevel: number
+  cleanSession: boolean
+  keepAliveSeconds: number
+  connectedAtMs: number
+  connectedDurationMs: number
+  lastPacketAtMs: number
+  idleMs: number
+  subscriptionCount: number
+  traceId: string
+}
+
+/** 在线客户端列表分页结果 */
+export interface OnlineClientListResult {
+  total: number
+  page: number
+  size: number
+  clients: OnlineClientInfo[]
+}
+
+/** 踢出客户端结果 */
+export interface DisconnectResult {
+  clientId: string
+  disconnected: boolean
+}

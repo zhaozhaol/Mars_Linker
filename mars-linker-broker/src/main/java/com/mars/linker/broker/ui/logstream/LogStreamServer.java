@@ -9,6 +9,9 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.channel.epoll.Epoll;
+import io.netty.channel.epoll.EpollEventLoopGroup;
+import io.netty.channel.epoll.EpollServerSocketChannel;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.codec.http.websocketx.WebSocketServerProtocolHandler;
@@ -46,14 +49,21 @@ public class LogStreamServer implements SmartLifecycle {
     public void start() {
         if (running) return;
 
-        bossGroup = new NioEventLoopGroup(1, new DefaultThreadFactory("log-ws-boss", true));
-        workerGroup = new NioEventLoopGroup(2, new DefaultThreadFactory("log-ws-worker", true));
+        boolean useEpoll = Epoll.isAvailable();
+        if (useEpoll) {
+            bossGroup = new EpollEventLoopGroup(1, new DefaultThreadFactory("log-ws-boss", true));
+            workerGroup = new EpollEventLoopGroup(2, new DefaultThreadFactory("log-ws-worker", true));
+        } else {
+            bossGroup = new NioEventLoopGroup(1, new DefaultThreadFactory("log-ws-boss", true));
+            workerGroup = new NioEventLoopGroup(2, new DefaultThreadFactory("log-ws-worker", true));
+        }
 
         ServerBootstrap bootstrap = new ServerBootstrap();
         bootstrap.group(bossGroup, workerGroup)
-                .channel(NioServerSocketChannel.class)
+                .channel(useEpoll ? EpollServerSocketChannel.class : NioServerSocketChannel.class)
                 .option(ChannelOption.SO_BACKLOG, 128)
                 .childOption(ChannelOption.SO_KEEPALIVE, true)
+                .childOption(ChannelOption.TCP_NODELAY, true)
                 .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) {

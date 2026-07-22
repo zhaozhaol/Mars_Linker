@@ -106,6 +106,8 @@
       />
     </div>
 
+    <ConnectionListPanel ref="connectionListRef" />
+
     <div class="panels-grid">
       <div class="panel broker-panel">
         <div class="panel-header">
@@ -204,6 +206,7 @@ import { getConnectionMetrics, getMessageMetrics, getSubscriptionMetrics, getSys
 import type { ConnectionMetrics, MessageMetrics, SubscriptionMetrics, SystemMetrics, HealthStatus } from '../types/monitoring'
 import TrendChart from '../components/monitoring/TrendChart.vue'
 import ConnectionPanel from '../components/monitoring/ConnectionPanel.vue'
+import ConnectionListPanel from '../components/monitoring/ConnectionListPanel.vue'
 import MessagePanel from '../components/monitoring/MessagePanel.vue'
 import SubscriptionPanel from '../components/monitoring/SubscriptionPanel.vue'
 import SystemPanel from '../components/monitoring/SystemPanel.vue'
@@ -230,6 +233,8 @@ const systemLoading = ref(false)
 const systemError = ref<string | null>(null)
 
 const healthStatus = ref<HealthStatus | null>(null)
+
+const connectionListRef = ref<InstanceType<typeof ConnectionListPanel> | null>(null)
 
 const fetchConnection = async () => {
   connectionLoading.value = true; connectionError.value = null

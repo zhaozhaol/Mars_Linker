@@ -1,7 +1,6 @@
 package com.mars.linker.broker.netty.protocol;
 
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.util.AttributeKey;
 import io.netty.util.HashedWheelTimer;
@@ -9,21 +8,21 @@ import io.netty.util.Timeout;
 import com.mars.linker.broker.netty.trace.TraceContext;
 import org.slf4j.Logger;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.TimeUnit;
 
 /**
  * QoS1 下行：packetId 分配、inflight 跟踪与可选重传（DUP=1）。
+ * <p>
+ * OPT-9: 移除冗余 {@code Set<Integer>} inflight 结构，统一用
+ * {@code ConcurrentHashMap<Integer, Inflight>} 做跟踪。重传未启用时用
+ * {@link #NO_RETRANSMIT_MARKER} 占位，避免创建完整 Inflight 对象。
  */
 public final class QoS1OutboundService {
     private static final AttributeKey<Integer> PROTOCOL_LEVEL = AttributeKey.valueOf("mqtt_protocol_level");
 
-    private static final AttributeKey<Set<Integer>> OUTBOUND_QOS1_INFLIGHT =
-            AttributeKey.valueOf("mqtt_outbound_qos1_inflight");
     private static final AttributeKey<ConcurrentHashMap<Integer, Inflight>> OUTBOUND_QOS1_INFLIGHT_MAP =
             AttributeKey.valueOf("mqtt_outbound_qos1_inflight_map");
     private static final AttributeKey<Timeout> OUTBOUND_QOS1_RETRANSMIT_TASK =
@@ -34,6 +33,9 @@ public final class QoS1OutboundService {
     @SuppressWarnings("unchecked")
     private static final AttributeKey<ConcurrentHashMap<Integer, ?>> OUTBOUND_QOS2_INFLIGHT_CHECK =
             AttributeKey.valueOf("mqtt_outbound_qos2_inflight");
+
+    /** 重传未启用时的占位标记，所有非重传 inflight 条目共享此对象。 */
+    private static final Inflight NO_RETRANSMIT_MARKER = new Inflight(null, null, false, 0L);
 
     private final boolean retransmitEnabled;
     private final long retransmitIntervalMs;
@@ -67,7 +69,7 @@ public final class QoS1OutboundService {
             AtomicInteger newId = new AtomicInteger(0);
             id = ctx.channel().attr(NEXT_OUTBOUND_PACKET_ID).compareAndSet(null, newId) ? newId : ctx.channel().attr(NEXT_OUTBOUND_PACKET_ID).get();
         }
-        Set<Integer> qos1Inflight = ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT).get();
+        ConcurrentHashMap<Integer, Inflight> qos1Map = ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT_MAP).get();
         ConcurrentHashMap<Integer, ?> qos2Inflight = ctx.channel().attr(OUTBOUND_QOS2_INFLIGHT_CHECK).get();
         return id.updateAndGet(prev -> {
             int n = prev + 1;
@@ -75,7 +77,7 @@ public final class QoS1OutboundService {
                 n = 1;
             }
             // BUG-11 修复：回绕时跳过仍在 inflight 的 packetId（QoS1 + QoS2 共享 packetId 空间）
-            if ((qos1Inflight != null && qos1Inflight.contains(n))
+            if ((qos1Map != null && qos1Map.containsKey(n))
                     || (qos2Inflight != null && qos2Inflight.containsKey(n))) {
                 int start = n;
                 do {
@@ -83,7 +85,7 @@ public final class QoS1OutboundService {
                     if (n == start) {
                         return prev; // 所有 id 都在 inflight（不应发生），保持原值
                     }
-                } while ((qos1Inflight != null && qos1Inflight.contains(n))
+                } while ((qos1Map != null && qos1Map.containsKey(n))
                         || (qos2Inflight != null && qos2Inflight.containsKey(n)));
             }
             return n;
@@ -95,20 +97,11 @@ public final class QoS1OutboundService {
                String topic,
                byte[] payload,
                boolean retain) {
-        trackInflightId(ctx, packetId);
-        if (!retransmitEnabled) {
+        // OPT-9: 统一用 inflightMap 跟踪，移除冗余 Set
+        ConcurrentHashMap<Integer, Inflight> m = getOrCreateInflightMap(ctx);
+        if (!retransmitEnabled || retransmitIntervalMs <= 0) {
+            m.put(packetId, NO_RETRANSMIT_MARKER);
             return;
-        }
-        if (retransmitIntervalMs <= 0) {
-            return;
-        }
-        // BUG-5 修复：用 compareAndSet 原子化，避免跨 EventLoop 并发时两个发布者都看到 null 导致 set 互相覆盖
-        ConcurrentHashMap<Integer, Inflight> m = ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT_MAP).get();
-        if (m == null) {
-            m = new ConcurrentHashMap<>();
-            if (!ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT_MAP).compareAndSet(null, m)) {
-                m = ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT_MAP).get();
-            }
         }
         byte[] copy = new byte[payload.length];
         System.arraycopy(payload, 0, copy, 0, payload.length);
@@ -116,10 +109,6 @@ public final class QoS1OutboundService {
     }
 
     public void onPubAck(ChannelHandlerContext ctx, int packetId) {
-        Set<Integer> inflight = ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT).get();
-        if (inflight != null) {
-            inflight.remove(packetId);
-        }
         ConcurrentHashMap<Integer, Inflight> m = ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT_MAP).get();
         if (m != null) {
             m.remove(packetId);
@@ -132,11 +121,11 @@ public final class QoS1OutboundService {
                      byte[] payload,
                      boolean retain,
                      boolean dup) {
-        byte[] topicBytes = topic.getBytes(StandardCharsets.UTF_8);
+        byte[] topicBytes = TopicEncodingCache.get(topic);
         Integer level = ctx.channel().attr(PROTOCOL_LEVEL).get();
         boolean mqtt5 = level != null && level == 0x05;
         int rl = 2 + topicBytes.length + 2 + (mqtt5 ? 1 : 0) + payload.length;
-        ByteBuf out = Unpooled.buffer();
+        ByteBuf out = ctx.alloc().buffer(5 + rl);
         int fh = 0x32 | (dup ? 0x08 : 0x00) | (retain ? 0x01 : 0x00);
         out.writeByte(fh);
         writeRemainingLength(out, rl);
@@ -200,7 +189,8 @@ public final class QoS1OutboundService {
         for (Map.Entry<Integer, Inflight> e : m.entrySet()) {
             int packetId = e.getKey();
             Inflight msg = e.getValue();
-            if (msg == null) {
+            if (msg == null || msg.topic == null) {
+                // OPT-9: NO_RETRANSMIT_MARKER 或 null 跳过
                 continue;
             }
             long age = now - msg.lastSentAtMs;
@@ -220,16 +210,17 @@ public final class QoS1OutboundService {
         }
     }
 
-    private static void trackInflightId(ChannelHandlerContext ctx, int packetId) {
-        // BUG-5 修复：用 compareAndSet 原子化，避免并发时 set 互相覆盖导致 inflight 条目进入孤儿 map
-        Set<Integer> inflight = ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT).get();
-        if (inflight == null) {
-            inflight = ConcurrentHashMap.newKeySet();
-            if (!ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT).compareAndSet(null, inflight)) {
-                inflight = ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT).get();
+    // OPT-9: 移除 trackInflightId，统一用 getOrCreateInflightMap
+    private static ConcurrentHashMap<Integer, Inflight> getOrCreateInflightMap(ChannelHandlerContext ctx) {
+        // BUG-5 修复：用 compareAndSet 原子化，避免跨 EventLoop 并发时两个发布者都看到 null 导致 set 互相覆盖
+        ConcurrentHashMap<Integer, Inflight> m = ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT_MAP).get();
+        if (m == null) {
+            m = new ConcurrentHashMap<>();
+            if (!ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT_MAP).compareAndSet(null, m)) {
+                m = ctx.channel().attr(OUTBOUND_QOS1_INFLIGHT_MAP).get();
             }
         }
-        inflight.add(packetId);
+        return m;
     }
 
     private static void writeRemainingLength(ByteBuf out, int value) {
@@ -258,6 +249,14 @@ public final class QoS1OutboundService {
             this.lastSentAtMs = System.currentTimeMillis();
             this.retransmitAttempts = 0;
         }
+
+        /** 用于创建 NO_RETRANSMIT_MARKER，跳过 System.currentTimeMillis() 调用。 */
+        private Inflight(String topic, byte[] payload, boolean retain, long lastSentAtMs) {
+            this.topic = topic;
+            this.payload = payload;
+            this.retain = retain;
+            this.lastSentAtMs = lastSentAtMs;
+            this.retransmitAttempts = 0;
+        }
     }
 }
-

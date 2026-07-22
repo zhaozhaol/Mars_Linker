@@ -17,6 +17,7 @@ public final class ClientSessionContext {
     private static final AttributeKey<CloseReason> CLOSE_REASON = AttributeKey.valueOf("mqtt_close_reason");
     private static final AttributeKey<Integer> KEEP_ALIVE_SECONDS = AttributeKey.valueOf("mqtt_keep_alive_seconds");
     private static final AttributeKey<Long> LAST_PACKET_AT_MS = AttributeKey.valueOf("mqtt_last_packet_at_ms");
+    private static final AttributeKey<Long> CONNECTED_AT_MS = AttributeKey.valueOf("mqtt_connected_at_ms");
     private static final AttributeKey<Timeout> KEEPALIVE_TASK = AttributeKey.valueOf("mqtt_keepalive_task");
     private static final AttributeKey<String> WILL_TOPIC = AttributeKey.valueOf("mqtt_will_topic");
     private static final AttributeKey<byte[]> WILL_PAYLOAD = AttributeKey.valueOf("mqtt_will_payload");
@@ -57,6 +58,9 @@ public final class ClientSessionContext {
 
     public Long lastPacketAtMs() { return channel.attr(LAST_PACKET_AT_MS).get(); }
     void lastPacketAtMs(Long value) { channel.attr(LAST_PACKET_AT_MS).set(value); }
+
+    public Long connectedAtMs() { return channel.attr(CONNECTED_AT_MS).get(); }
+    void connectedAtMs(Long value) { channel.attr(CONNECTED_AT_MS).set(value); }
 
     public Timeout keepAliveTask() { return channel.attr(KEEPALIVE_TASK).get(); }
     void keepAliveTask(Timeout value) { channel.attr(KEEPALIVE_TASK).set(value); }

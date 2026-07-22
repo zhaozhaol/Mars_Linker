@@ -1,5 +1,5 @@
 import apiClient from './client'
-import type { MonitoringOverview, ConnectionMetrics, MessageMetrics, SubscriptionMetrics, SystemMetrics, HealthStatus, MonitoringSelfMetrics, MonitoringSnapshot, PagedResult, SubscriptionTopicInfo, SubscriberDetail, ClientSubscriptionInfo, TopicRateLimitOverview, TopicRateLimitStats } from '../types/monitoring'
+import type { MonitoringOverview, ConnectionMetrics, MessageMetrics, SubscriptionMetrics, SystemMetrics, HealthStatus, MonitoringSelfMetrics, MonitoringSnapshot, PagedResult, SubscriptionTopicInfo, SubscriberDetail, ClientSubscriptionInfo, TopicRateLimitOverview, TopicRateLimitStats, OnlineClientListResult, DisconnectResult } from '../types/monitoring'
 
 export function getMonitoringOverview(): Promise<MonitoringOverview> {
   return apiClient.get('/monitoring/overview')
@@ -57,4 +57,16 @@ export function getTopicRateLimits(): Promise<TopicRateLimitOverview> {
 
 export function getTopicRateLimitDetail(topic: string): Promise<TopicRateLimitStats> {
   return apiClient.get(`/monitoring/topic-rate-limits/${encodeURIComponent(topic)}`)
+}
+
+/** 获取在线客户端连接明细列表 */
+export function getOnlineClients(params: { page?: number; size?: number }): Promise<OnlineClientListResult> {
+  return apiClient.get('/monitoring/connections/list', { params })
+}
+
+/** 踢出指定客户端连接 */
+export function disconnectClient(clientId: string, reason?: string): Promise<DisconnectResult> {
+  return apiClient.delete(`/monitoring/connections/${encodeURIComponent(clientId)}`, {
+    params: reason ? { reason } : undefined
+  })
 }

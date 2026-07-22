@@ -76,6 +76,37 @@ public class MonitoringController {
         return ResponseEntity.ok(metricCategoryService.connectionMetrics());
     }
 
+    /**
+     * 获取在线客户端连接明细列表（用于管理 UI 的连接管理面板）。
+     * <p>
+     * 返回每个在线客户端的 clientId、远程地址、协议版本、cleanSession、
+     * keepAlive、连接时间、连接时长、最后活动时间、空闲时长、订阅数。
+     *
+     * @param page 页码（从 1 开始）
+     * @param size 每页条数（默认 50，最大 500）
+     */
+    @GetMapping("/connections/list")
+    public ResponseEntity<?> connectionList(
+            @RequestParam(name = "page", defaultValue = "1") int page,
+            @RequestParam(name = "size", defaultValue = "50") int size) {
+        ResponseEntity<?> limitCheck = checkRateLimit();
+        if (limitCheck != null) return limitCheck;
+        if (page < 1) page = 1;
+        if (size < 1) size = 50;
+        if (size > 500) size = 500;
+        java.util.List<Map<String, Object>> all = protocolHandler.listOnlineClients();
+        int total = all.size();
+        int fromIndex = Math.min((page - 1) * size, total);
+        int toIndex = Math.min(fromIndex + size, total);
+        java.util.List<Map<String, Object>> pageData = all.subList(fromIndex, toIndex);
+        return ResponseEntity.ok(Map.of(
+                "total", total,
+                "page", page,
+                "size", size,
+                "clients", pageData
+        ));
+    }
+
     @GetMapping("/messages")
     public ResponseEntity<?> messages() {
         ResponseEntity<?> limitCheck = checkRateLimit();

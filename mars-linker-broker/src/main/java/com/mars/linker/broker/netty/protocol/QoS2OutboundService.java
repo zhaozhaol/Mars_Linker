@@ -105,7 +105,7 @@ public final class QoS2OutboundService {
     }
 
     private static void writePubRel(ChannelHandlerContext ctx, int packetId) {
-        ByteBuf buf = Unpooled.buffer(4);
+        ByteBuf buf = ctx.alloc().buffer(4);
         buf.writeByte(0x62);
         buf.writeByte(0x02);
         buf.writeShort(packetId);

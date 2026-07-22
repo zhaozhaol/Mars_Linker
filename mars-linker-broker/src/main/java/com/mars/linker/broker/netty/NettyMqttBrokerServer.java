@@ -10,6 +10,9 @@ import io.netty.channel.WriteBufferWaterMark;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.channel.epoll.Epoll;
+import io.netty.channel.epoll.EpollEventLoopGroup;
+import io.netty.channel.epoll.EpollServerSocketChannel;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.util.concurrent.DefaultThreadFactory;
@@ -120,16 +123,23 @@ public class NettyMqttBrokerServer implements SmartLifecycle {
                 ? properties.getWorkerThreads()
                 : Math.max(1, Runtime.getRuntime().availableProcessors()) * 2;
 
-        // 重要：这里必须使用非 daemon 线程，否则 JVM 会在 Spring 启动完成后立刻退出（你看到的“启动后马上 stop”）。
-        this.bossGroup = new NioEventLoopGroup(boss, new DefaultThreadFactory("MarsLinker-mqtt-boss", false));
-        this.workerGroup = new NioEventLoopGroup(workers, new DefaultThreadFactory("MarsLinker-mqtt-io", false));
+        // Linux 上使用 Epoll（edge-triggered + 零拷贝），其他平台回退 NIO
+        boolean useEpoll = Epoll.isAvailable();
+        if (useEpoll) {
+            this.bossGroup = new EpollEventLoopGroup(boss, new DefaultThreadFactory("MarsLinker-mqtt-boss", false));
+            this.workerGroup = new EpollEventLoopGroup(workers, new DefaultThreadFactory("MarsLinker-mqtt-io", false));
+        } else {
+            this.bossGroup = new NioEventLoopGroup(boss, new DefaultThreadFactory("MarsLinker-mqtt-boss", false));
+            this.workerGroup = new NioEventLoopGroup(workers, new DefaultThreadFactory("MarsLinker-mqtt-io", false));
+        }
 
         ServerBootstrap bootstrap = new ServerBootstrap();
         int listenPort = properties.isTlsEnabled() ? properties.getTlsPort() : properties.getTcpPort();
         bootstrap.group(bossGroup, workerGroup)
-                .channel(NioServerSocketChannel.class)
+                .channel(useEpoll ? EpollServerSocketChannel.class : NioServerSocketChannel.class)
                 .option(ChannelOption.SO_BACKLOG, properties.getSoBacklog())
                 .childOption(ChannelOption.SO_KEEPALIVE, true)
+                .childOption(ChannelOption.TCP_NODELAY, true)
                 .childOption(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(32 * 1024, 64 * 1024))
                 .childHandler(new MqttTcpChannelInitializer(properties.getMaxPacketBytes(), mqttProtocolHandler, sslContext));
 
@@ -137,9 +147,11 @@ public class NettyMqttBrokerServer implements SmartLifecycle {
         this.serverChannel = bindFuture.channel();
         this.running = true;
         if (properties.isTlsEnabled()) {
-            log.info("Netty MQTT TLS listening on port {} (boss={}, worker={})", listenPort, boss, workers);
+            log.info("Netty MQTT TLS listening on port {} (boss={}, worker={}, transport={})",
+                    listenPort, boss, workers, useEpoll ? "epoll" : "nio");
         } else {
-            log.info("Netty MQTT TCP listening on port {} (boss={}, worker={})", listenPort, boss, workers);
+            log.info("Netty MQTT TCP listening on port {} (boss={}, worker={}, transport={})",
+                    listenPort, boss, workers, useEpoll ? "epoll" : "nio");
         }
         if (properties.isEventNotifyEnabled()) {
             log.info("事件通知已启用：eventNotifyEnabled=true");

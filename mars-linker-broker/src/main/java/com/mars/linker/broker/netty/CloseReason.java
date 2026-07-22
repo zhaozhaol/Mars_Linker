@@ -17,6 +17,7 @@ public enum CloseReason {
 
     CLIENT_DISCONNECT(false, "客户端主动发送 DISCONNECT 报文"),
     KICKED_BY_NEW_CONNECTION(false, "同 clientId 新连接替代，踢掉旧连接"),
+    KICKED_BY_ADMIN(false, "管理员通过管理 API 主动剔除连接"),
     SERVER_SHUTDOWN(false, "服务端正常关闭（@PreDestroy）"),
     PROTOCOL_VIOLATION(false, "协议校验拒绝连接（如无效 CONNECT 报文）"),
     AUTH_FAILED(false, "鉴权失败，连接被拒绝"),

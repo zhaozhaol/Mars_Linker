@@ -1,6 +1,7 @@
 package com.mars.linker.broker.netty.protocol;
 
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -11,7 +12,34 @@ import java.util.concurrent.CopyOnWriteArraySet;
  */
 public final class TopicFilterSupport {
 
+    private static final ConcurrentHashMap<String, String[]> FILTER_PARTS_CACHE = new ConcurrentHashMap<>();
+    private static final int FILTER_CACHE_MAX = 4096;
+
     private TopicFilterSupport() {
+    }
+
+    /**
+     * 返回 filter 按 '/' split 的结果，优先从缓存获取。
+     * MQTT 场景 filter 数量有限且相对稳定，缓存命中率极高。
+     */
+    private static String[] getFilterParts(String filter) {
+        String[] parts = FILTER_PARTS_CACHE.get(filter);
+        if (parts != null) {
+            return parts;
+        }
+        parts = filter.split("/", -1);
+        if (FILTER_PARTS_CACHE.size() < FILTER_CACHE_MAX) {
+            String[] existing = FILTER_PARTS_CACHE.putIfAbsent(filter, parts);
+            if (existing != null) {
+                parts = existing;
+            }
+        }
+        return parts;
+    }
+
+    /** 仅供测试清空缓存。 */
+    static void clearFilterPartsCacheForTests() {
+        FILTER_PARTS_CACHE.clear();
     }
 
     public static boolean isExactTopic(String topicFilter) {
@@ -85,25 +113,35 @@ public final class TopicFilterSupport {
         if (!filter.contains("+") && !filter.contains("#")) {
             return filter.equals(topic);
         }
-        String[] f = filter.split("/", -1);
-        String[] t = topic.split("/", -1);
+        String[] f = getFilterParts(filter);
+        // 手动遍历 topic 层级，避免 topic.split("/", -1) 产生临时数组
+        int tStart = 0;
+        int tLen = topic.length();
         int i = 0;
         for (; i < f.length; i++) {
             String fp = f[i];
             if (fp.equals("#")) {
                 return i == f.length - 1;
             }
-            if (i >= t.length) {
+            if (tStart > tLen) {
+                // topic 层级已耗尽
                 return false;
             }
+            int slash = topic.indexOf('/', tStart);
             if (fp.equals("+")) {
+                // 匹配任意单层（含空层级）
+                tStart = slash < 0 ? tLen + 1 : slash + 1;
                 continue;
             }
-            if (!fp.equals(t[i])) {
+            // 精确层级匹配
+            String tp = slash < 0 ? topic.substring(tStart) : topic.substring(tStart, slash);
+            if (!fp.equals(tp)) {
                 return false;
             }
+            tStart = slash < 0 ? tLen + 1 : slash + 1;
         }
-        return i == t.length;
+        // 所有 filter 层级已消费，topic 也必须全部消费
+        return tStart > tLen;
     }
 
     public static final class ShareSubscription {
@@ -179,7 +217,7 @@ public final class TopicFilterSupport {
                 return Collections.emptySet();
             }
             String[] levels = topic.split("/", -1);
-            Set<String> out = new CopyOnWriteArraySet<>();
+            Set<String> out = new HashSet<>();
             collect(root, levels, 0, out);
             return out;
         }

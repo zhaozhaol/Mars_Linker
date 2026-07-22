@@ -1,18 +1,21 @@
 package com.mars.linker.broker.netty.protocol;
 
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelId;
 import io.netty.util.AttributeKey;
 import org.slf4j.Logger;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import com.mars.linker.broker.netty.store.SessionService;
 
 /**
  * 发布路由与下行投递（QoS0/1）处理。
+ * <p>
+ * OPT-8: payload 参数改为 ByteBuf，QoS0/QoS1 转发路径使用
+ * {@code out.writeBytes(payload, readerIndex, len)} 零拷贝写入，
+ * 避免中间 byte[] 分配。byte[] 仅在需要存储时（离线队列、QoS1 inflight、QoS2 inflight）按需提取。
+ * <b>调用方负责 ByteBuf 的 release，本方法不 release。</b>
  */
 public final class PublishRouter {
     private static final AttributeKey<Integer> PROTOCOL_LEVEL = AttributeKey.valueOf("mqtt_protocol_level");
@@ -33,7 +36,7 @@ public final class PublishRouter {
     }
 
     public static int publishAndEnqueueOffline(String topic,
-                                        byte[] payload,
+                                        ByteBuf payload,
                                         boolean retain,
                                         boolean dup,
                                         int pubQos,
@@ -55,13 +58,19 @@ public final class PublishRouter {
                 }
         );
 
+        int payloadLen = payload.readableBytes();
+        int payloadReaderIndex = payload.readerIndex();
+
         if (grantedQosBySubscriber.isEmpty()) {
-            enqueueForOfflinePersistentSessions(topic, payload, false, pubQos, sessionService, clientToChannel, channels);
+            byte[] bytes = new byte[payloadLen];
+            payload.getBytes(payloadReaderIndex, bytes);
+            sessionService.enqueueForOfflineMatches(topic, bytes, false, pubQos);
             log.trace("PUBLISH 无订阅者 topic={}", topic);
             return 0;
         }
 
-        byte[] topicBytes = topic.getBytes(StandardCharsets.UTF_8);
+        byte[] topicBytes = TopicEncodingCache.get(topic);
+        byte[] payloadBytes = null; // 懒提取：仅 QoS1/QoS2 inflight 和离线队列需要 byte[]
         int n = 0;
         for (Map.Entry<ChannelId, Integer> entry : grantedQosBySubscriber.entrySet()) {
             ChannelId subscriberId = entry.getKey();
@@ -75,8 +84,8 @@ public final class PublishRouter {
             Integer level = subscriberCtx.channel().attr(PROTOCOL_LEVEL).get();
             boolean mqtt5 = level != null && level == 0x05;
             if (eff == 0) {
-                int rl = 2 + topicBytes.length + (mqtt5 ? 1 : 0) + payload.length;
-                ByteBuf out = Unpooled.buffer();
+                int rl = 2 + topicBytes.length + (mqtt5 ? 1 : 0) + payloadLen;
+                ByteBuf out = subscriberCtx.alloc().buffer(5 + rl);
                 int fh = 0x30;
                 out.writeByte(fh);
                 writeRemainingLength(out, rl);
@@ -85,18 +94,26 @@ public final class PublishRouter {
                 if (mqtt5) {
                     out.writeByte(0x00);
                 }
-                out.writeBytes(payload);
+                out.writeBytes(payload, payloadReaderIndex, payloadLen);
                 subscriberCtx.writeAndFlush(out);
             } else if (eff == 2 && qos2Publisher != null) {
+                if (payloadBytes == null) {
+                    payloadBytes = new byte[payloadLen];
+                    payload.getBytes(payloadReaderIndex, payloadBytes);
+                }
                 int outPacketId = packetIdSupplier.next(subscriberCtx);
-                qos2Publisher.publishQos2(subscriberCtx, topic, payload, false, outPacketId);
+                qos2Publisher.publishQos2(subscriberCtx, topic, payloadBytes, false, outPacketId);
                 log.debug("下行 PUBLISH QoS2 topic={} outPacketId={} -> subscriberChannelId={}",
                         topic, outPacketId, subscriberId.asShortText());
             } else {
+                if (payloadBytes == null) {
+                    payloadBytes = new byte[payloadLen];
+                    payload.getBytes(payloadReaderIndex, payloadBytes);
+                }
                 int outPacketId = packetIdSupplier.next(subscriberCtx);
-                outboundTracker.track(subscriberCtx, outPacketId, topic, payload, false);
-                int rl = 2 + topicBytes.length + 2 + (mqtt5 ? 1 : 0) + payload.length;
-                ByteBuf out = Unpooled.buffer();
+                outboundTracker.track(subscriberCtx, outPacketId, topic, payloadBytes, false);
+                int rl = 2 + topicBytes.length + 2 + (mqtt5 ? 1 : 0) + payloadLen;
+                ByteBuf out = subscriberCtx.alloc().buffer(5 + rl);
                 int fh = 0x32 | (dup ? 0x08 : 0x00);
                 out.writeByte(fh);
                 writeRemainingLength(out, rl);
@@ -107,43 +124,19 @@ public final class PublishRouter {
                     // properties length
                     out.writeByte(0x00);
                 }
-                out.writeBytes(payload);
+                out.writeBytes(payload, payloadReaderIndex, payloadLen);
                 subscriberCtx.writeAndFlush(out);
                 log.debug("下行 PUBLISH QoS1 topic={} outPacketId={} -> subscriberChannelId={}",
                         topic, outPacketId, subscriberId.asShortText());
             }
             n++;
         }
-        enqueueForOfflinePersistentSessions(topic, payload, false, pubQos, sessionService, clientToChannel, channels);
-        return n;
-    }
-
-    private static void enqueueForOfflinePersistentSessions(String topic,
-                                                            byte[] payload,
-                                                            boolean retain,
-                                                            int pubQos,
-                                                            SessionService sessionService,
-                                                            Map<String, ChannelId> clientToChannel,
-                                                            Map<ChannelId, ChannelHandlerContext> channels) {
-        for (SessionService.Session session : sessionService.offlineSessions()) {
-            if (session == null) {
-                continue;
-            }
-            int granted = -1;
-            for (Map.Entry<String, Integer> sub : session.subscriptionsQos().entrySet()) {
-                if (TopicFilterSupport.matchTopicFilter(sub.getKey(), topic)) {
-                    int q = sub.getValue() == null ? 0 : sub.getValue();
-                    granted = Math.max(granted, q);
-                }
-            }
-            if (granted < 0) {
-                continue;
-            }
-            int eff = normalizeEffectiveQos(pubQos, granted);
-            if (sessionService.enqueueOfflineMessage(session, topic, payload, retain, eff)) {
-                sessionService.persist(session.clientId);
-            }
+        if (payloadBytes == null) {
+            payloadBytes = new byte[payloadLen];
+            payload.getBytes(payloadReaderIndex, payloadBytes);
         }
+        sessionService.enqueueForOfflineMatches(topic, payloadBytes, false, pubQos);
+        return n;
     }
 
     private static void writeRemainingLength(ByteBuf out, int value) {
