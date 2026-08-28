@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { getTopicRateLimits } from '../api/monitoring'
-import type { TopicRateLimitStats, TopicRateLimitOverview } from '../types/monitoring'
+import type { TopicRateLimitOverview } from '../types/monitoring'
 
 const loading = ref(false)
 const error = ref<string | null>(null)

@@ -258,14 +258,16 @@ const fetchHealth = async () => {
 
 const { start, stop, resume } = usePolling({
   interval: refreshInterval,
-  callback: () => Promise.all([
-    monitoringStore.fetchOverview(),
-    fetchConnection(),
-    fetchMessage(),
-    fetchSubscription(),
-    fetchSystem(),
-    fetchHealth()
-  ])
+  callback: async () => {
+    await Promise.all([
+      monitoringStore.fetchOverview(),
+      fetchConnection(),
+      fetchMessage(),
+      fetchSubscription(),
+      fetchSystem(),
+      fetchHealth()
+    ])
+  }
 })
 
 const manualRefresh = async () => {
